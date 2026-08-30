@@ -4,257 +4,382 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data:;"
     />
     <title>SSH Manager</title>
+
+    <!-- Ubuntu Sans / Ubuntu Sans Mono: bộ chữ mặc định của Ubuntu 25.10 trở đi.
+         Nạp cả latin-ext vì glyph tiếng Việt nằm trong subset đó. -->
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans/latin-400.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans/latin-ext-400.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans/latin-500.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans/latin-ext-500.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans/latin-700.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans/latin-ext-700.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans-mono/latin-400.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans-mono/latin-ext-400.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans-mono/latin-700.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/ubuntu-sans-mono/latin-ext-700.css" />
+
     <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <!-- ===== Màn hình khoá ===== -->
+    <!-- Nút cửa sổ kiểu Ubuntu: đặt ngoài cùng để dùng được cả khi kho đang khoá -->
+    <div class="window-controls">
+      <button id="wc-min" class="wc" title="Thu nhỏ" aria-label="Thu nhỏ">
+        <svg viewBox="0 0 16 16" width="16" height="16">
+          <path fill="currentColor" d="M4 7.25h8v1.5H4z" />
+        </svg>
+      </button>
+      <button id="wc-max" class="wc" title="Phóng to" aria-label="Phóng to">
+        <svg viewBox="0 0 16 16" width="16" height="16">
+          <rect
+            x="4.75"
+            y="4.75"
+            width="6.5"
+            height="6.5"
+            rx="1.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          />
+        </svg>
+      </button>
+      <button id="wc-close" class="wc wc-close" title="Đóng" aria-label="Đóng">
+        <svg viewBox="0 0 16 16" width="16" height="16">
+          <path
+            fill="currentColor"
+            d="M4.28 3.22a.75.75 0 0 0-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 1 0 1.06 1.06L8 9.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L9.06 8l3.72-3.72a.75.75 0 0 0-1.06-1.06L8 6.94Z"
+          />
+        </svg>
+      </button>
+    </div>
+
+    <!-- ===================== Màn hình khoá ===================== -->
     <div id="lock-screen" class="lock-screen">
-      <form id="lock-form" class="lock-card">
-        <div class="lock-logo">SSH</div>
+      <div class="lock-drag"></div>
+      <form id="lock-form" class="lock-dialog">
+        <div class="lock-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" width="30" height="30">
+            <path
+              fill="currentColor"
+              d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1Zm0 1.5a2 2 0 0 1 2 2V6H6V4.5a2 2 0 0 1 2-2Zm0 6a1.25 1.25 0 0 1 .5 2.4V12a.5.5 0 0 1-1 0v-1.1A1.25 1.25 0 0 1 8 8.5Z"
+            />
+          </svg>
+        </div>
         <h1 id="lock-title">Mở kho kết nối</h1>
-        <p id="lock-subtitle" class="muted">Nhập master password để giải mã kho.</p>
+        <p id="lock-subtitle" class="dim">Nhập master password để giải mã kho.</p>
 
-        <input
-          id="lock-password"
-          type="password"
-          placeholder="Master password"
-          autocomplete="current-password"
-          required
-        />
-        <input
-          id="lock-password-confirm"
-          type="password"
-          placeholder="Nhập lại master password"
-          autocomplete="new-password"
-          hidden
-        />
+        <div class="lock-fields">
+          <input
+            id="lock-password"
+            type="password"
+            placeholder="Master password"
+            autocomplete="current-password"
+            required
+          />
+          <input
+            id="lock-password-confirm"
+            type="password"
+            placeholder="Nhập lại master password"
+            autocomplete="new-password"
+            hidden
+          />
+        </div>
 
-        <div id="lock-error" class="form-error" hidden></div>
-        <button id="lock-submit" type="submit" class="btn btn-primary btn-block">Mở khoá</button>
-        <p id="lock-hint" class="lock-hint muted" hidden>
+        <div id="lock-error" class="banner banner-error" hidden></div>
+        <button id="lock-submit" type="submit" class="btn btn-suggested btn-block">Mở khoá</button>
+        <p id="lock-hint" class="lock-hint dim" hidden>
           Master password không thể khôi phục. Quên là mất toàn bộ kho.
         </p>
       </form>
     </div>
 
-    <!-- ===== Ứng dụng ===== -->
+    <!-- ===================== Ứng dụng ===================== -->
     <div id="app" class="app" hidden>
-      <aside class="sidebar">
-        <header class="sidebar-head">
-          <div class="brand">SSH Manager</div>
-          <button id="btn-lock" class="icon-btn" title="Khoá kho (Ctrl+L)">🔒</button>
-        </header>
-
-        <div class="search-wrap">
-          <input id="search" type="search" placeholder="Tìm host, tên, nhóm…  (Ctrl+K)" />
-        </div>
-
-        <div id="conn-list" class="conn-list"></div>
-
-        <footer class="sidebar-foot">
-          <button id="btn-new" class="btn btn-primary btn-sm">+ Kết nối</button>
-          <button id="btn-import" class="btn btn-ghost btn-sm" title="Nhập từ ~/.ssh/config">
-            Nhập config
-          </button>
-          <button id="btn-settings" class="btn btn-ghost btn-sm" title="Cài đặt">⚙</button>
-        </footer>
-      </aside>
-
-      <main class="main">
-        <div id="tabbar" class="tabbar"></div>
-
-        <div class="terminal-area">
-          <div id="terminals" class="terminals"></div>
-          <div id="empty-state" class="empty-state">
-            <div class="empty-icon">⌘</div>
-            <h2>Chưa có phiên nào</h2>
-            <p class="muted">
-              Chọn một máy chủ ở cột trái rồi nhấn <kbd>Enter</kbd>, hoặc nhấn
-              <kbd>Ctrl</kbd>+<kbd>K</kbd> để tìm nhanh.
-            </p>
+      <!-- Thanh tiêu đề kiểu GNOME: chia đôi theo sidebar và vùng nội dung -->
+      <header class="headerbar">
+        <div class="hb-pane hb-pane-sidebar">
+          <span class="hb-title">Máy chủ</span>
+          <div class="hb-actions">
+            <button id="btn-new" class="hb-btn" title="Kết nối mới (Ctrl+N)" aria-label="Kết nối mới">
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <path fill="currentColor" d="M7.25 2.5h1.5v4.75h4.75v1.5H8.75v4.75h-1.5V8.75H2.5v-1.5h4.75Z" />
+              </svg>
+            </button>
           </div>
         </div>
 
-        <div id="snippet-bar" class="snippet-bar">
-          <span class="snippet-label">Lệnh nhanh</span>
-          <div id="snippet-list" class="snippet-list"></div>
-          <button id="btn-new-snippet" class="btn btn-ghost btn-xs">+ Thêm</button>
-        </div>
+        <div class="hb-pane hb-pane-main">
+          <div class="hb-titles">
+            <span class="hb-title" id="hb-title">SSH Manager</span>
+            <span class="hb-subtitle dim" id="hb-subtitle">Chưa có phiên nào</span>
+          </div>
 
-        <div id="statusbar" class="statusbar">
-          <span id="status-text" class="muted">Sẵn sàng</span>
+          <div class="hb-actions hb-actions-right">
+            <button id="btn-import" class="hb-btn" title="Nhập từ ~/.ssh/config" aria-label="Nhập config">
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <path fill="currentColor" d="M8 1.75a.75.75 0 0 1 .75.75v5.19l1.72-1.72a.75.75 0 1 1 1.06 1.06l-3 3a.75.75 0 0 1-1.06 0l-3-3a.75.75 0 0 1 1.06-1.06l1.72 1.72V2.5A.75.75 0 0 1 8 1.75ZM2.75 10a.75.75 0 0 1 .75.75v1.75h9v-1.75a.75.75 0 0 1 1.5 0v2.5a.75.75 0 0 1-.75.75h-10.5a.75.75 0 0 1-.75-.75v-2.5a.75.75 0 0 1 .75-.75Z" />
+              </svg>
+            </button>
+            <button id="btn-settings" class="hb-btn" title="Cài đặt" aria-label="Cài đặt">
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <path fill="currentColor" d="M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5Zm0 1.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
+                <path fill="currentColor" d="m6.9 1.5-.28 1.53a5.5 5.5 0 0 0-1.06.61L4.1 3.1 2.6 5.7l1.19.99a5.6 5.6 0 0 0 0 1.22L2.6 8.9l1.5 2.6 1.46-.54c.33.25.69.45 1.06.61l.28 1.53h3l.28-1.53c.37-.16.73-.36 1.06-.61l1.46.54 1.5-2.6-1.19-.99a5.6 5.6 0 0 0 0-1.22l1.19-.99-1.5-2.6-1.46.54a5.5 5.5 0 0 0-1.06-.61L9.9 1.5Zm1.1 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" />
+              </svg>
+            </button>
+            <button id="btn-lock" class="hb-btn" title="Khoá kho (Ctrl+L)" aria-label="Khoá kho">
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <path fill="currentColor" d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1Zm0 1.5a2 2 0 0 1 2 2V6H6V4.5a2 2 0 0 1 2-2Z" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </main>
+      </header>
+
+      <div class="body">
+        <aside class="sidebar">
+          <div class="search-wrap">
+            <svg class="search-icon" viewBox="0 0 16 16" width="15" height="15">
+              <path
+                fill="currentColor"
+                d="M7 2a5 5 0 1 0 3.09 8.93l2.99 2.99a.75.75 0 1 0 1.06-1.06l-2.99-2.99A5 5 0 0 0 7 2Zm0 1.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"
+              />
+            </svg>
+            <input id="search" type="text" placeholder="Tìm máy chủ" />
+          </div>
+
+          <div id="conn-list" class="conn-list"></div>
+        </aside>
+
+        <main class="main">
+          <div id="tabbar" class="tabbar"></div>
+
+          <div class="terminal-area">
+            <div id="terminals" class="terminals"></div>
+            <div id="empty-state" class="empty-state">
+              <div class="empty-art" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="64" height="64">
+                  <path
+                    fill="currentColor"
+                    d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5Zm1.5 0v9h9v-9Z"
+                  />
+                  <path
+                    fill="currentColor"
+                    d="M4.72 5.47a.75.75 0 0 1 1.06 0l1.75 1.75a.75.75 0 0 1 0 1.06L5.78 10.03a.75.75 0 1 1-1.06-1.06L5.94 7.75 4.72 6.53a.75.75 0 0 1 0-1.06ZM8.75 9.5h2.5v1.25h-2.5z"
+                  />
+                </svg>
+              </div>
+              <h2>Chưa có phiên nào</h2>
+              <p class="dim">
+                Chọn một máy chủ ở cột bên trái, hoặc nhấn
+                <kbd>Ctrl</kbd>+<kbd>K</kbd> để tìm nhanh.
+              </p>
+            </div>
+          </div>
+
+          <div id="snippet-bar" class="snippet-bar">
+            <div id="snippet-list" class="snippet-list"></div>
+            <button id="btn-new-snippet" class="btn btn-flat btn-sm" title="Thêm lệnh nhanh">
+              <svg viewBox="0 0 16 16" width="14" height="14">
+                <path fill="currentColor" d="M7.25 2.5h1.5v4.75h4.75v1.5H8.75v4.75h-1.5V8.75H2.5v-1.5h4.75Z" />
+              </svg>
+              Lệnh nhanh
+            </button>
+          </div>
+        </main>
+      </div>
+
+      <!-- Thông báo nổi kiểu AdwToast -->
+      <div id="statusbar" class="toast" hidden>
+        <span id="status-text"></span>
+      </div>
     </div>
 
-    <!-- ===== Bảng tìm nhanh (Ctrl+K) ===== -->
-    <div id="palette" class="overlay" hidden>
-      <div class="palette-card">
-        <input id="palette-input" type="text" placeholder="Gõ tên hoặc host rồi Enter để kết nối…" />
+    <!-- ===================== Bảng tìm nhanh ===================== -->
+    <div id="palette" class="overlay overlay-top" hidden>
+      <div class="palette">
+        <div class="palette-search">
+          <svg viewBox="0 0 16 16" width="16" height="16">
+            <path
+              fill="currentColor"
+              d="M7 2a5 5 0 1 0 3.09 8.93l2.99 2.99a.75.75 0 1 0 1.06-1.06l-2.99-2.99A5 5 0 0 0 7 2Zm0 1.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"
+            />
+          </svg>
+          <input id="palette-input" type="text" placeholder="Tìm máy chủ rồi nhấn Enter để kết nối" />
+        </div>
         <div id="palette-results" class="palette-results"></div>
       </div>
     </div>
 
-    <!-- ===== Form kết nối ===== -->
+    <!-- ===================== Hộp thoại kết nối ===================== -->
     <div id="conn-modal" class="overlay" hidden>
-      <form id="conn-form" class="modal-card">
-        <h2 id="conn-modal-title">Kết nối mới</h2>
+      <form id="conn-form" class="dialog">
+        <header class="dialog-head">
+          <h2 id="conn-modal-title">Kết nối mới</h2>
+        </header>
 
-        <div class="grid-2">
-          <label>
-            Tên hiển thị
-            <input id="f-name" type="text" placeholder="Web server prod" />
-          </label>
-          <label>
-            Nhóm
-            <input id="f-group" type="text" placeholder="Production" list="group-options" />
-            <datalist id="group-options"></datalist>
-          </label>
-        </div>
+        <div class="dialog-body">
+          <div id="conn-error" class="banner banner-error" hidden></div>
 
-        <div class="grid-host">
-          <label>
-            Host <span class="req">*</span>
-            <input id="f-host" type="text" placeholder="10.0.0.5 hoặc example.com" required />
-          </label>
-          <label>
-            Cổng
-            <input id="f-port" type="number" value="22" min="1" max="65535" />
-          </label>
-        </div>
+          <div class="listbox">
+            <label class="row">
+              <span class="row-label">Tên hiển thị</span>
+              <input id="f-name" type="text" placeholder="Máy chủ web" />
+            </label>
+            <label class="row">
+              <span class="row-label">Nhóm</span>
+              <input id="f-group" type="text" placeholder="Sản xuất" list="group-options" />
+              <datalist id="group-options"></datalist>
+            </label>
+          </div>
 
-        <label>
-          Tên đăng nhập <span class="req">*</span>
-          <input id="f-username" type="text" placeholder="root" required />
-        </label>
+          <div class="listbox">
+            <label class="row">
+              <span class="row-label">Host <span class="req">*</span></span>
+              <input id="f-host" type="text" placeholder="10.0.0.5" required />
+            </label>
+            <label class="row">
+              <span class="row-label">Cổng</span>
+              <input id="f-port" type="number" value="22" min="1" max="65535" class="input-narrow" />
+            </label>
+            <label class="row">
+              <span class="row-label">Tên đăng nhập <span class="req">*</span></span>
+              <input id="f-username" type="text" placeholder="ubuntu" required />
+            </label>
+          </div>
 
-        <fieldset class="auth-block">
-          <legend>Xác thực</legend>
-          <div class="radio-row">
-            <label class="radio">
+          <h3 class="section-title">Xác thực</h3>
+          <div class="segmented">
+            <label>
               <input type="radio" name="authType" value="key" checked />
               <span>SSH key</span>
             </label>
-            <label class="radio">
+            <label>
               <input type="radio" name="authType" value="password" />
               <span>Mật khẩu</span>
             </label>
           </div>
 
-          <div id="auth-key" class="auth-pane">
-            <label>
-              Private key
-              <div class="row">
-                <input id="f-keypath" type="text" placeholder="Để trống nếu dùng ssh-agent" />
-                <button type="button" id="btn-pick-key" class="btn btn-ghost btn-sm">Chọn…</button>
+          <div id="auth-key" class="listbox">
+            <label class="row">
+              <span class="row-label">Private key</span>
+              <div class="row-inline">
+                <input id="f-keypath" type="text" placeholder="Trống = dùng ssh-agent" />
+                <button type="button" id="btn-pick-key" class="btn btn-flat btn-sm">Chọn…</button>
               </div>
             </label>
-            <label>
-              Passphrase của key
-              <input
-                id="f-passphrase"
-                type="password"
-                placeholder="Bỏ trống nếu key không có passphrase"
-                autocomplete="new-password"
-              />
-              <small id="passphrase-note" class="muted" hidden>
-                Đang có passphrase đã lưu — để trống để giữ nguyên.
-              </small>
+            <label class="row">
+              <span class="row-label">Passphrase</span>
+              <input id="f-passphrase" type="password" autocomplete="new-password" />
             </label>
+            <p id="passphrase-note" class="row-note dim" hidden>
+              Đang có passphrase đã lưu — để trống để giữ nguyên.
+            </p>
           </div>
 
-          <div id="auth-password" class="auth-pane" hidden>
-            <label>
-              Mật khẩu
+          <div id="auth-password" class="listbox" hidden>
+            <label class="row">
+              <span class="row-label">Mật khẩu</span>
               <input id="f-password" type="password" autocomplete="new-password" />
-              <small id="password-note" class="muted" hidden>
-                Đang có mật khẩu đã lưu — để trống để giữ nguyên.
-              </small>
             </label>
-            <small class="muted">
+            <p id="password-note" class="row-note dim" hidden>
+              Đang có mật khẩu đã lưu — để trống để giữ nguyên.
+            </p>
+            <p class="row-note dim">
               Mật khẩu được mã hoá AES-256-GCM trong kho. Dùng SSH key vẫn an toàn hơn.
-            </small>
+            </p>
           </div>
-        </fieldset>
 
-        <label>
-          Lệnh chạy ngay khi kết nối
-          <input id="f-onconnect" type="text" placeholder="cd /var/www &amp;&amp; ls -la" />
-        </label>
-
-        <label>
-          Ghi chú
-          <textarea id="f-notes" rows="2" placeholder="Máy chủ nào, dùng làm gì…"></textarea>
-        </label>
-
-        <div id="conn-error" class="form-error" hidden></div>
-
-        <div class="modal-actions">
-          <button type="button" id="btn-conn-delete" class="btn btn-danger btn-sm" hidden>Xoá</button>
-          <span class="spacer"></span>
-          <button type="button" class="btn btn-ghost" data-close="conn-modal">Huỷ</button>
-          <button type="submit" class="btn btn-primary">Lưu</button>
+          <h3 class="section-title">Tuỳ chọn</h3>
+          <div class="listbox">
+            <label class="row">
+              <span class="row-label">Lệnh chạy khi kết nối</span>
+              <input id="f-onconnect" type="text" placeholder="cd /var/www &amp;&amp; ls -la" />
+            </label>
+            <label class="row row-stacked">
+              <span class="row-label">Ghi chú</span>
+              <textarea id="f-notes" rows="2" placeholder="Máy chủ này dùng làm gì…"></textarea>
+            </label>
+          </div>
         </div>
+
+        <footer class="dialog-foot">
+          <button type="button" id="btn-conn-delete" class="btn btn-destructive" hidden>Xoá</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-flat" data-close="conn-modal">Huỷ</button>
+          <button type="submit" class="btn btn-suggested">Lưu</button>
+        </footer>
       </form>
     </div>
 
-    <!-- ===== Form lệnh nhanh ===== -->
+    <!-- ===================== Hộp thoại lệnh nhanh ===================== -->
     <div id="snippet-modal" class="overlay" hidden>
-      <form id="snippet-form" class="modal-card modal-narrow">
-        <h2 id="snippet-modal-title">Lệnh nhanh</h2>
-        <label>
-          Tên
-          <input id="s-name" type="text" placeholder="Xem log nginx" required />
-        </label>
-        <label>
-          Câu lệnh
-          <textarea id="s-command" rows="3" placeholder="tail -f /var/log/nginx/error.log" required></textarea>
-        </label>
-        <label class="checkbox">
-          <input id="s-autorun" type="checkbox" checked />
-          <span>Chạy luôn (bỏ chọn thì chỉ chèn vào dòng lệnh)</span>
-        </label>
-        <div id="snippet-error" class="form-error" hidden></div>
-        <div class="modal-actions">
-          <button type="button" id="btn-snippet-delete" class="btn btn-danger btn-sm" hidden>Xoá</button>
-          <span class="spacer"></span>
-          <button type="button" class="btn btn-ghost" data-close="snippet-modal">Huỷ</button>
-          <button type="submit" class="btn btn-primary">Lưu</button>
+      <form id="snippet-form" class="dialog dialog-narrow">
+        <header class="dialog-head">
+          <h2 id="snippet-modal-title">Lệnh nhanh</h2>
+        </header>
+        <div class="dialog-body">
+          <div id="snippet-error" class="banner banner-error" hidden></div>
+          <div class="listbox">
+            <label class="row">
+              <span class="row-label">Tên</span>
+              <input id="s-name" type="text" placeholder="Xem log nginx" required />
+            </label>
+            <label class="row row-stacked">
+              <span class="row-label">Câu lệnh</span>
+              <textarea id="s-command" rows="3" placeholder="tail -f /var/log/nginx/error.log" required></textarea>
+            </label>
+            <label class="row row-switch">
+              <span class="row-label">
+                Chạy luôn
+                <small class="dim">Tắt thì chỉ chèn vào dòng lệnh, chưa gửi</small>
+              </span>
+              <input id="s-autorun" type="checkbox" class="switch" checked />
+            </label>
+          </div>
         </div>
+        <footer class="dialog-foot">
+          <button type="button" id="btn-snippet-delete" class="btn btn-destructive" hidden>Xoá</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-flat" data-close="snippet-modal">Huỷ</button>
+          <button type="submit" class="btn btn-suggested">Lưu</button>
+        </footer>
       </form>
     </div>
 
-    <!-- ===== Cài đặt ===== -->
+    <!-- ===================== Cài đặt ===================== -->
     <div id="settings-modal" class="overlay" hidden>
-      <div class="modal-card modal-narrow">
-        <h2>Cài đặt</h2>
+      <div class="dialog dialog-narrow">
+        <header class="dialog-head">
+          <h2>Cài đặt</h2>
+        </header>
+        <div class="dialog-body">
+          <form id="password-form">
+            <h3 class="section-title">Đổi master password</h3>
+            <div id="password-error" class="banner banner-error" hidden></div>
+            <div id="password-ok" class="banner banner-ok" hidden>Đã đổi master password.</div>
+            <div class="listbox">
+              <label class="row">
+                <span class="row-label">Mật khẩu hiện tại</span>
+                <input id="p-old" type="password" autocomplete="current-password" required />
+              </label>
+              <label class="row">
+                <span class="row-label">Mật khẩu mới</span>
+                <input id="p-new" type="password" autocomplete="new-password" required />
+              </label>
+            </div>
+            <button type="submit" class="btn btn-flat btn-sm">Đổi mật khẩu</button>
+          </form>
 
-        <form id="password-form">
-          <h3>Đổi master password</h3>
-          <label>
-            Mật khẩu hiện tại
-            <input id="p-old" type="password" autocomplete="current-password" required />
-          </label>
-          <label>
-            Mật khẩu mới
-            <input id="p-new" type="password" autocomplete="new-password" required />
-          </label>
-          <div id="password-error" class="form-error" hidden></div>
-          <div id="password-ok" class="form-ok" hidden>Đã đổi master password.</div>
-          <button type="submit" class="btn btn-primary btn-sm">Đổi mật khẩu</button>
-        </form>
-
-        <h3>Thông tin</h3>
-        <dl id="app-info" class="info-list"></dl>
-
-        <div class="modal-actions">
-          <span class="spacer"></span>
-          <button type="button" class="btn btn-ghost" data-close="settings-modal">Đóng</button>
+          <h3 class="section-title">Thông tin</h3>
+          <dl id="app-info" class="listbox info-list"></dl>
         </div>
+        <footer class="dialog-foot">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-flat" data-close="settings-modal">Đóng</button>
+        </footer>
       </div>
     </div>
 

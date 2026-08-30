@@ -53,6 +53,19 @@ const api = {
     confirm: (message, detail) => ipcRenderer.invoke('dialog:confirm', message, detail),
   },
 
+  // Cửa sổ không khung: trang tự vẽ nút thu nhỏ / phóng to / đóng
+  window: {
+    minimize: () => ipcRenderer.invoke('win:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('win:toggleMaximize'),
+    close: () => ipcRenderer.invoke('win:close'),
+    isMaximized: () => ipcRenderer.invoke('win:isMaximized'),
+    onStateChange: (handler) => {
+      const listener = (_event, state) => handler(state);
+      ipcRenderer.on('win:state', listener);
+      return () => ipcRenderer.removeListener('win:state', listener);
+    },
+  },
+
   app: {
     info: () => ipcRenderer.invoke('app:info'),
   },

@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { StringDecoder } = require('string_decoder');
 const { Client } = require('ssh2');
 
 const WINDOWS_AGENT_PIPE = '\\\\.\\pipe\\openssh-ssh-agent';
@@ -99,8 +100,14 @@ class SshManager {
         (err, stream) => {
           if (err) return fail('Không mở được shell: ' + err.message);
           entry.stream = stream;
-          stream.on('data', (chunk) => onData(chunk.toString('utf8')));
-          stream.stderr.on('data', (chunk) => onData(chunk.toString('utf8')));
+
+          // Ký tự tiếng Việt chiếm 2-3 byte UTF-8 và TCP có thể cắt gói vào giữa
+          // một ký tự. StringDecoder giữ lại phần byte dở dang chờ mảnh kế tiếp,
+          // thay vì giải mã từng mảnh rời rạc và sinh ra ký tự hỏng.
+          const outDecoder = new StringDecoder('utf8');
+          const errDecoder = new StringDecoder('utf8');
+          stream.on('data', (chunk) => onData(outDecoder.write(chunk)));
+          stream.stderr.on('data', (chunk) => onData(errDecoder.write(chunk)));
           stream.on('close', () => {
             onStatus({ state: 'closed', message: 'Phiên đã đóng' });
             this._cleanup(sessionId);

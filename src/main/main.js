@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme } = require('electron');
 const { Vault } = require('./vault');
 const { SshManager, KnownHosts, detectAgent } = require('./ssh-manager');
 
@@ -17,7 +17,11 @@ function createWindow() {
     height: 820,
     minWidth: 900,
     minHeight: 560,
-    backgroundColor: '#14161a',
+    // Không dùng khung của hệ điều hành: thanh tiêu đề do trang tự vẽ theo
+    // kiểu GNOME. thickFrame vẫn bật nên kéo cạnh để đổi kích thước và snap
+    // của Windows vẫn hoạt động bình thường.
+    frame: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#242424' : '#fafafa',
     show: false,
     title: 'SSH Manager',
     webPreferences: {
@@ -39,6 +43,15 @@ function createWindow() {
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+
+  // Trang tự vẽ nút phóng to nên cần biết cửa sổ đang ở trạng thái nào
+  const sendWindowState = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('win:state', { maximized: mainWindow.isMaximized() });
+    }
+  };
+  mainWindow.on('maximize', sendWindowState);
+  mainWindow.on('unmaximize', sendWindowState);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -166,6 +179,25 @@ function registerIpc() {
     return result.canceled ? null : result.filePaths[0];
   });
 
+  handle('win:minimize', () => {
+    if (mainWindow) mainWindow.minimize();
+    return true;
+  });
+
+  handle('win:toggleMaximize', () => {
+    if (!mainWindow) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return mainWindow.isMaximized();
+  });
+
+  handle('win:close', () => {
+    if (mainWindow) mainWindow.close();
+    return true;
+  });
+
+  handle('win:isMaximized', () => Boolean(mainWindow && mainWindow.isMaximized()));
+
   handle('dialog:confirm', async (message, detail) => {
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'question',
@@ -180,54 +212,13 @@ function registerIpc() {
   });
 }
 
+/**
+ * Cửa sổ không có khung nên phải bỏ hẳn menu: nếu còn menu, Electron sẽ vẽ
+ * thanh menu vào trong vùng nội dung và đè lên thanh tiêu đề tự vẽ.
+ * Phím tắt do renderer tự xử lý.
+ */
 function buildMenu() {
-  const template = [
-    {
-      label: 'Tệp',
-      submenu: [
-        {
-          label: 'Kết nối mới',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => mainWindow && mainWindow.webContents.send('menu:newConnection'),
-        },
-        {
-          label: 'Tìm nhanh',
-          accelerator: 'CmdOrCtrl+K',
-          click: () => mainWindow && mainWindow.webContents.send('menu:quickOpen'),
-        },
-        { type: 'separator' },
-        {
-          label: 'Khoá kho',
-          accelerator: 'CmdOrCtrl+L',
-          click: () => mainWindow && mainWindow.webContents.send('menu:lock'),
-        },
-        { type: 'separator' },
-        { role: 'quit', label: 'Thoát' },
-      ],
-    },
-    {
-      label: 'Chỉnh sửa',
-      submenu: [
-        { role: 'copy', label: 'Sao chép' },
-        { role: 'paste', label: 'Dán' },
-        { role: 'selectAll', label: 'Chọn tất cả' },
-      ],
-    },
-    {
-      label: 'Xem',
-      submenu: [
-        { role: 'reload', label: 'Tải lại' },
-        { role: 'toggleDevTools', label: 'Công cụ nhà phát triển' },
-        { type: 'separator' },
-        { role: 'resetZoom', label: 'Cỡ chữ mặc định' },
-        { role: 'zoomIn', label: 'Phóng to' },
-        { role: 'zoomOut', label: 'Thu nhỏ' },
-        { type: 'separator' },
-        { role: 'togglefullscreen', label: 'Toàn màn hình' },
-      ],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(null);
 }
 
 // Chỉ cho phép một tiến trình, tránh hai cửa sổ ghi đè vault của nhau

@@ -13,28 +13,32 @@ async function call(promise) {
   return res.data;
 }
 
+/**
+ * Bảng màu terminal mặc định của Ubuntu: nền tím cà #300A24 cùng bảng Tango.
+ * Giữ nguyên trong cả chế độ sáng lẫn tối, đúng như GNOME Terminal trên Ubuntu.
+ */
 const TERM_THEME = {
-  background: '#14161a',
-  foreground: '#dfe3ea',
-  cursor: '#4f9cf9',
-  cursorAccent: '#14161a',
-  selectionBackground: 'rgba(79, 156, 249, 0.3)',
-  black: '#2c313b',
-  red: '#ef5f6b',
-  green: '#3ddc97',
-  yellow: '#f2b04a',
-  blue: '#4f9cf9',
-  magenta: '#c78ef7',
-  cyan: '#4fd6e0',
-  white: '#dfe3ea',
-  brightBlack: '#5c6472',
-  brightRed: '#ff8189',
-  brightGreen: '#6ff0b8',
-  brightYellow: '#ffc978',
-  brightBlue: '#7bb8ff',
-  brightMagenta: '#dcb0ff',
-  brightCyan: '#84e9f0',
-  brightWhite: '#ffffff',
+  background: '#300A24',
+  foreground: '#FFFFFF',
+  cursor: '#FFFFFF',
+  cursorAccent: '#300A24',
+  selectionBackground: 'rgba(233, 84, 32, 0.45)',
+  black: '#2E3436',
+  red: '#CC0000',
+  green: '#4E9A06',
+  yellow: '#C4A000',
+  blue: '#3465A4',
+  magenta: '#75507B',
+  cyan: '#06989A',
+  white: '#D3D7CF',
+  brightBlack: '#555753',
+  brightRed: '#EF2929',
+  brightGreen: '#8AE234',
+  brightYellow: '#FCE94F',
+  brightBlue: '#729FCF',
+  brightMagenta: '#AD7FA8',
+  brightCyan: '#34E2E2',
+  brightWhite: '#EEEEEC',
 };
 
 const state = {
@@ -54,10 +58,35 @@ const state = {
  * Tiện ích
  * ========================================================================= */
 
+let toastTimer = null;
+
+/** Thông báo nổi kiểu AdwToast: hiện giữa dưới rồi tự tắt. */
 function setStatus(text, kind) {
-  const el = $('status-text');
-  el.textContent = text;
-  el.className = kind === 'error' ? 'status-err' : kind === 'ok' ? 'status-ok' : 'muted';
+  const toast = $('statusbar');
+  $('status-text').textContent = text;
+  toast.className =
+    'toast' + (kind === 'error' ? ' toast-error' : kind === 'ok' ? ' toast-ok' : '');
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.hidden = true;
+  }, kind === 'error' ? 6000 : 3500);
+}
+
+/** Cập nhật tiêu đề thanh trên theo phiên đang xem. */
+function renderHeader() {
+  const session = state.sessions.get(state.activeSessionId);
+  const conn = session && state.connections.find((c) => c.id === session.connId);
+  if (session && conn) {
+    $('hb-title').textContent = conn.name;
+    $('hb-subtitle').textContent =
+      conn.username + '@' + conn.host + (conn.port !== 22 ? ':' + conn.port : '');
+  } else {
+    $('hb-title').textContent = 'SSH Manager';
+    $('hb-subtitle').textContent = state.sessions.size
+      ? state.sessions.size + ' phiên đang mở'
+      : 'Chưa có phiên nào';
+  }
 }
 
 function showError(elId, message) {
@@ -76,6 +105,26 @@ function openModal(id) {
 
 function closeModal(id) {
   $(id).hidden = true;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const ICON_EDIT =
+  'M11.13 1.47a1.75 1.75 0 0 1 2.47 2.47l-.72.72-2.47-2.47ZM9.35 3.25l2.47 2.47-6.1 6.1-3.09.62.62-3.09Z';
+const ICON_CLOSE =
+  'M4.28 3.22a.75.75 0 0 0-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 1 0 1.06 1.06L8 9.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L9.06 8l3.72-3.72a.75.75 0 0 0-1.06-1.06L8 6.94Z';
+
+/** Dựng icon SVG kiểu symbolic của GNOME. */
+function icon(pathData, size) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', size || 16);
+  svg.setAttribute('height', size || 16);
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('fill', 'currentColor');
+  path.setAttribute('d', pathData);
+  svg.appendChild(path);
+  return svg;
 }
 
 /** Số phiên đang mở của một kết nối, dùng để chấm xanh trong danh sách. */
@@ -166,13 +215,26 @@ async function refreshAll() {
   renderGroupOptions();
 }
 
+/**
+ * Bỏ dấu tiếng Việt để gõ nhanh không dấu vẫn tìm ra máy có dấu.
+ * NFD tách chữ cái khỏi dấu thanh thành hai ký tự rời, xoá dải dấu là xong;
+ * riêng đ/Đ không phải chữ có dấu thanh nên phải thay tay.
+ */
+function boDau(text) {
+  return String(text)
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
 function matchesFilter(conn, needle) {
   if (!needle) return true;
-  const hay = [conn.name, conn.host, conn.username, conn.group, conn.notes]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  return hay.includes(needle);
+  const hay = boDau(
+    [conn.name, conn.host, conn.username, conn.group, conn.notes].filter(Boolean).join(' ')
+  );
+  return hay.includes(boDau(needle));
 }
 
 /** Ưu tiên máy hay dùng và mới dùng để "truy cập nhanh" đúng nghĩa. */
@@ -245,7 +307,7 @@ function connectionItem(conn) {
   const edit = document.createElement('button');
   edit.className = 'conn-edit';
   edit.type = 'button';
-  edit.textContent = '✎';
+  edit.appendChild(icon(ICON_EDIT, 14));
   edit.title = 'Sửa';
   edit.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -292,9 +354,11 @@ async function openSession(connId) {
 
   const term = new Terminal({
     theme: TERM_THEME,
-    fontFamily: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
-    fontSize: 13,
+    fontFamily: '"Ubuntu Sans Mono", "Ubuntu Mono", "Cascadia Mono", Consolas, monospace',
+    fontSize: 14,
+    lineHeight: 1.1,
     cursorBlink: true,
+    cursorStyle: 'block',
     scrollback: 10000,
     allowProposedApi: true,
   });
@@ -375,11 +439,12 @@ function renderTabs() {
     const dot = document.createElement('span');
     dot.className = 'tab-dot';
     const label = document.createElement('span');
+    label.className = 'tab-label';
     label.textContent = session.name;
     const close = document.createElement('button');
     close.className = 'tab-close';
     close.type = 'button';
-    close.textContent = '×';
+    close.appendChild(icon(ICON_CLOSE, 13));
     close.title = 'Đóng phiên (Ctrl+W)';
     close.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -390,6 +455,7 @@ function renderTabs() {
     tab.addEventListener('click', () => activateSession(sessionId));
     bar.appendChild(tab);
   }
+  renderHeader();
 }
 
 bridge.ssh.onData((sessionId, data) => {
@@ -439,12 +505,13 @@ function renderSnippets() {
     chip.title = snippet.command;
 
     const label = document.createElement('span');
+    label.className = 'chip-name';
     label.textContent = snippet.name;
     label.addEventListener('click', () => runSnippet(snippet));
 
     const edit = document.createElement('span');
     edit.className = 'chip-edit';
-    edit.textContent = '✎';
+    edit.appendChild(icon(ICON_EDIT, 12));
     edit.title = 'Sửa';
     edit.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -655,6 +722,10 @@ function movePalette(delta) {
 $('palette-input').addEventListener('input', (event) => renderPalette(event.target.value));
 
 $('palette-input').addEventListener('keydown', (event) => {
+  // Bộ gõ tiếng Việt đang soạn thảo: Enter và mũi tên lúc này thuộc về bộ gõ
+  // (chốt từ, chọn ứng viên), không phải lệnh của ứng dụng.
+  if (event.isComposing || event.keyCode === 229) return;
+
   if (event.key === 'ArrowDown') {
     event.preventDefault();
     movePalette(1);
@@ -715,6 +786,16 @@ $('password-form').addEventListener('submit', async (event) => {
  * Nút và phím tắt
  * ========================================================================= */
 
+// --- Nút cửa sổ (cửa sổ không khung nên trang tự vẽ) ---
+$('wc-min').addEventListener('click', () => bridge.window.minimize());
+$('wc-close').addEventListener('click', () => bridge.window.close());
+$('wc-max').addEventListener('click', () => bridge.window.toggleMaximize());
+
+bridge.window.onStateChange(({ maximized }) => {
+  document.body.classList.toggle('maximized', maximized);
+  $('wc-max').title = maximized ? 'Khôi phục' : 'Phóng to';
+});
+
 $('btn-new').addEventListener('click', () => openConnectionModal(null));
 $('btn-new-snippet').addEventListener('click', () => openSnippetModal(null));
 $('btn-lock').addEventListener('click', lockVault);
@@ -745,6 +826,10 @@ for (const overlay of document.querySelectorAll('.overlay')) {
 }
 
 document.addEventListener('keydown', (event) => {
+  // Đang gõ tiếng Việt thì nhường toàn bộ phím cho bộ gõ; đặc biệt là Escape,
+  // vốn dùng để huỷ từ đang soạn chứ không phải để đóng hộp thoại.
+  if (event.isComposing || event.keyCode === 229) return;
+
   const ctrl = event.ctrlKey || event.metaKey;
 
   if (event.key === 'Escape') {
@@ -752,6 +837,27 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if ($('app').hidden) return; // đang ở màn hình khoá
+
+  // Sao chép / dán theo quy ước GNOME Terminal: trong terminal, Ctrl+C là tín
+  // hiệu ngắt tiến trình nên phải thêm Shift mới là sao chép.
+  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'c') {
+    event.preventDefault();
+    const session = state.sessions.get(state.activeSessionId);
+    if (session && session.term.hasSelection()) {
+      navigator.clipboard.writeText(session.term.getSelection());
+      setStatus('Đã sao chép vùng chọn.', 'ok');
+    }
+    return;
+  }
+  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'v') {
+    event.preventDefault();
+    if (state.activeSessionId) {
+      navigator.clipboard.readText().then((text) => {
+        if (text) bridge.ssh.input(state.activeSessionId, text);
+      });
+    }
+    return;
+  }
 
   if (ctrl && event.key.toLowerCase() === 'k') {
     event.preventDefault();
