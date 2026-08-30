@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+
+# Kho ket noi nam trong userData cua he dieu hanh, khong bao gio trong repo,
+# nhung chan them cho chac neu ai do copy ra day.
+vault.enc
+vault.enc.tmp
+known_hosts.json

@@ -1,0 +1,39 @@
+{
+  "name": "sshman",
+  "version": "1.0.0",
+  "description": "SSH connection manager - luu, truy cap nhanh va thao tac lenh",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "test": "node test/vault.test.js && node test/import.test.js && node test/ssh.test.js && electron test/ui.test.js",
+    "test:vault": "node test/vault.test.js",
+    "test:ssh": "node test/ssh.test.js",
+    "test:ui": "electron test/ui.test.js",
+    "test:import": "node test/import.test.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "build": {
+    "appId": "com.local.sshman",
+    "productName": "SSH Manager",
+    "files": [
+      "src/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.15.0",
+    "@xterm/xterm": "^5.5.0",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0"
+  }
+}

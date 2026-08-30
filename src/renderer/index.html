@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+    />
+    <title>SSH Manager</title>
+    <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- ===== Màn hình khoá ===== -->
+    <div id="lock-screen" class="lock-screen">
+      <form id="lock-form" class="lock-card">
+        <div class="lock-logo">SSH</div>
+        <h1 id="lock-title">Mở kho kết nối</h1>
+        <p id="lock-subtitle" class="muted">Nhập master password để giải mã kho.</p>
+
+        <input
+          id="lock-password"
+          type="password"
+          placeholder="Master password"
+          autocomplete="current-password"
+          required
+        />
+        <input
+          id="lock-password-confirm"
+          type="password"
+          placeholder="Nhập lại master password"
+          autocomplete="new-password"
+          hidden
+        />
+
+        <div id="lock-error" class="form-error" hidden></div>
+        <button id="lock-submit" type="submit" class="btn btn-primary btn-block">Mở khoá</button>
+        <p id="lock-hint" class="lock-hint muted" hidden>
+          Master password không thể khôi phục. Quên là mất toàn bộ kho.
+        </p>
+      </form>
+    </div>
+
+    <!-- ===== Ứng dụng ===== -->
+    <div id="app" class="app" hidden>
+      <aside class="sidebar">
+        <header class="sidebar-head">
+          <div class="brand">SSH Manager</div>
+          <button id="btn-lock" class="icon-btn" title="Khoá kho (Ctrl+L)">🔒</button>
+        </header>
+
+        <div class="search-wrap">
+          <input id="search" type="search" placeholder="Tìm host, tên, nhóm…  (Ctrl+K)" />
+        </div>
+
+        <div id="conn-list" class="conn-list"></div>
+
+        <footer class="sidebar-foot">
+          <button id="btn-new" class="btn btn-primary btn-sm">+ Kết nối</button>
+          <button id="btn-import" class="btn btn-ghost btn-sm" title="Nhập từ ~/.ssh/config">
+            Nhập config
+          </button>
+          <button id="btn-settings" class="btn btn-ghost btn-sm" title="Cài đặt">⚙</button>
+        </footer>
+      </aside>
+
+      <main class="main">
+        <div id="tabbar" class="tabbar"></div>
+
+        <div class="terminal-area">
+          <div id="terminals" class="terminals"></div>
+          <div id="empty-state" class="empty-state">
+            <div class="empty-icon">⌘</div>
+            <h2>Chưa có phiên nào</h2>
+            <p class="muted">
+              Chọn một máy chủ ở cột trái rồi nhấn <kbd>Enter</kbd>, hoặc nhấn
+              <kbd>Ctrl</kbd>+<kbd>K</kbd> để tìm nhanh.
+            </p>
+          </div>
+        </div>
+
+        <div id="snippet-bar" class="snippet-bar">
+          <span class="snippet-label">Lệnh nhanh</span>
+          <div id="snippet-list" class="snippet-list"></div>
+          <button id="btn-new-snippet" class="btn btn-ghost btn-xs">+ Thêm</button>
+        </div>
+
+        <div id="statusbar" class="statusbar">
+          <span id="status-text" class="muted">Sẵn sàng</span>
+        </div>
+      </main>
+    </div>
+
+    <!-- ===== Bảng tìm nhanh (Ctrl+K) ===== -->
+    <div id="palette" class="overlay" hidden>
+      <div class="palette-card">
+        <input id="palette-input" type="text" placeholder="Gõ tên hoặc host rồi Enter để kết nối…" />
+        <div id="palette-results" class="palette-results"></div>
+      </div>
+    </div>
+
+    <!-- ===== Form kết nối ===== -->
+    <div id="conn-modal" class="overlay" hidden>
+      <form id="conn-form" class="modal-card">
+        <h2 id="conn-modal-title">Kết nối mới</h2>
+
+        <div class="grid-2">
+          <label>
+            Tên hiển thị
+            <input id="f-name" type="text" placeholder="Web server prod" />
+          </label>
+          <label>
+            Nhóm
+            <input id="f-group" type="text" placeholder="Production" list="group-options" />
+            <datalist id="group-options"></datalist>
+          </label>
+        </div>
+
+        <div class="grid-host">
+          <label>
+            Host <span class="req">*</span>
+            <input id="f-host" type="text" placeholder="10.0.0.5 hoặc example.com" required />
+          </label>
+          <label>
+            Cổng
+            <input id="f-port" type="number" value="22" min="1" max="65535" />
+          </label>
+        </div>
+
+        <label>
+          Tên đăng nhập <span class="req">*</span>
+          <input id="f-username" type="text" placeholder="root" required />
+        </label>
+
+        <fieldset class="auth-block">
+          <legend>Xác thực</legend>
+          <div class="radio-row">
+            <label class="radio">
+              <input type="radio" name="authType" value="key" checked />
+              <span>SSH key</span>
+            </label>
+            <label class="radio">
+              <input type="radio" name="authType" value="password" />
+              <span>Mật khẩu</span>
+            </label>
+          </div>
+
+          <div id="auth-key" class="auth-pane">
+            <label>
+              Private key
+              <div class="row">
+                <input id="f-keypath" type="text" placeholder="Để trống nếu dùng ssh-agent" />
+                <button type="button" id="btn-pick-key" class="btn btn-ghost btn-sm">Chọn…</button>
+              </div>
+            </label>
+            <label>
+              Passphrase của key
+              <input
+                id="f-passphrase"
+                type="password"
+                placeholder="Bỏ trống nếu key không có passphrase"
+                autocomplete="new-password"
+              />
+              <small id="passphrase-note" class="muted" hidden>
+                Đang có passphrase đã lưu — để trống để giữ nguyên.
+              </small>
+            </label>
+          </div>
+
+          <div id="auth-password" class="auth-pane" hidden>
+            <label>
+              Mật khẩu
+              <input id="f-password" type="password" autocomplete="new-password" />
+              <small id="password-note" class="muted" hidden>
+                Đang có mật khẩu đã lưu — để trống để giữ nguyên.
+              </small>
+            </label>
+            <small class="muted">
+              Mật khẩu được mã hoá AES-256-GCM trong kho. Dùng SSH key vẫn an toàn hơn.
+            </small>
+          </div>
+        </fieldset>
+
+        <label>
+          Lệnh chạy ngay khi kết nối
+          <input id="f-onconnect" type="text" placeholder="cd /var/www &amp;&amp; ls -la" />
+        </label>
+
+        <label>
+          Ghi chú
+          <textarea id="f-notes" rows="2" placeholder="Máy chủ nào, dùng làm gì…"></textarea>
+        </label>
+
+        <div id="conn-error" class="form-error" hidden></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-conn-delete" class="btn btn-danger btn-sm" hidden>Xoá</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" data-close="conn-modal">Huỷ</button>
+          <button type="submit" class="btn btn-primary">Lưu</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ===== Form lệnh nhanh ===== -->
+    <div id="snippet-modal" class="overlay" hidden>
+      <form id="snippet-form" class="modal-card modal-narrow">
+        <h2 id="snippet-modal-title">Lệnh nhanh</h2>
+        <label>
+          Tên
+          <input id="s-name" type="text" placeholder="Xem log nginx" required />
+        </label>
+        <label>
+          Câu lệnh
+          <textarea id="s-command" rows="3" placeholder="tail -f /var/log/nginx/error.log" required></textarea>
+        </label>
+        <label class="checkbox">
+          <input id="s-autorun" type="checkbox" checked />
+          <span>Chạy luôn (bỏ chọn thì chỉ chèn vào dòng lệnh)</span>
+        </label>
+        <div id="snippet-error" class="form-error" hidden></div>
+        <div class="modal-actions">
+          <button type="button" id="btn-snippet-delete" class="btn btn-danger btn-sm" hidden>Xoá</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" data-close="snippet-modal">Huỷ</button>
+          <button type="submit" class="btn btn-primary">Lưu</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ===== Cài đặt ===== -->
+    <div id="settings-modal" class="overlay" hidden>
+      <div class="modal-card modal-narrow">
+        <h2>Cài đặt</h2>
+
+        <form id="password-form">
+          <h3>Đổi master password</h3>
+          <label>
+            Mật khẩu hiện tại
+            <input id="p-old" type="password" autocomplete="current-password" required />
+          </label>
+          <label>
+            Mật khẩu mới
+            <input id="p-new" type="password" autocomplete="new-password" required />
+          </label>
+          <div id="password-error" class="form-error" hidden></div>
+          <div id="password-ok" class="form-ok" hidden>Đã đổi master password.</div>
+          <button type="submit" class="btn btn-primary btn-sm">Đổi mật khẩu</button>
+        </form>
+
+        <h3>Thông tin</h3>
+        <dl id="app-info" class="info-list"></dl>
+
+        <div class="modal-actions">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" data-close="settings-modal">Đóng</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
