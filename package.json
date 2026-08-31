@@ -9,6 +9,8 @@
     "build": "electron-builder",
     "build:win": "electron-builder --win nsis portable",
     "build:linux": "electron-builder --linux AppImage deb",
+    "build:win:icon": "electron-builder --win nsis portable --config.win.icon=assets/icon.ico",
+    "build:linux:icon": "electron-builder --linux AppImage deb --config.linux.icon=assets/icon.png",
     "lint": "eslint .",
     "test": "npm run lint && node test/platform.test.js && node test/security.test.js && node test/vault.test.js && node test/backup.test.js && node test/import.test.js && node test/sftp.test.js && node test/tunnel.test.js && node test/metrics.test.js && node test/runtime.test.js && node test/utf8.test.js && node test/ssh.test.js && electron test/ui.test.js && electron test/ime.test.js && npm run test:theme",
     "test:runtime": "node test/runtime.test.js",

@@ -177,6 +177,24 @@ npm run build:win    # NSIS + portable, chạy trên Windows
 npm run build:linux  # AppImage + deb, chạy trên Ubuntu
 ```
 
+Bản NSIS cài cho riêng user hiện tại (không cần quyền admin) và tự tạo lối tắt ở
+Desktop cùng Start menu. Bản portable chạy thẳng, không cài và không tạo lối tắt.
+
+### Icon
+
+Mặc định dùng icon của Electron. Muốn đóng gói kèm icon riêng
+(`assets/icon.ico` cho Windows, `assets/icon.png` cho Linux) thì chạy:
+
+```bash
+npm run build:win:icon
+npm run build:linux:icon
+```
+
+Asset nằm ở `assets/` chứ không phải `build/` là có chủ ý: `build/icon.ico` sẽ bị
+electron-builder tự nhặt và icon riêng sẽ thành mặc định, mất luôn lựa chọn.
+Muốn đổi hình, sửa `assets/icon.ico` (cần đủ các cỡ 16→256) và `assets/icon.png`
+(tối thiểu 256×256).
+
 `electron-builder` đã được khai báo trong devDependencies. Kết quả nằm trong `dist/`.
 
 ## Cấu trúc

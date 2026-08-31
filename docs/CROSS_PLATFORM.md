@@ -41,7 +41,9 @@ npm run build:linux
 ```
 
 Kết quả gồm AppImage và `.deb` trong `dist/`. Electron-builder sinh desktop entry cho gói
-`.deb`; nên bổ sung icon PNG/ICO chính thức trước khi phát hành thương hiệu. Trên Wayland,
+`.deb`. Icon riêng có sẵn ở `assets/` nhưng là tuỳ chọn: `npm run build:win:icon` và
+`npm run build:linux:icon` mới dùng tới, còn `build:win`/`build:linux` vẫn giữ icon mặc
+định của Electron. Trên Wayland,
 Electron có thể chạy native bằng `--ozone-platform-hint=auto`; nếu driver/compositor có lỗi,
 đăng nhập phiên X11 hoặc chạy với `--ozone-platform=x11`.
 
@@ -96,7 +98,7 @@ QWebEngineView + xterm.js. Dependency và chi phí đóng gói Chromium vốn đ
 | Shell cục bộ                | Không dùng                      | Không dùng                | Không có chức năng chạy local command                   | Giữ tách biệt khỏi remote PTY                             | Rà source                                                      |
 | Storage/migration           | Vault JSON mã hóa               | Vault JSON mã hóa         | Chưa kiểm restore chéo trên Ubuntu thật                 | Backup mã hóa schema v4, import dedupe                    | Round-trip test đạt                                            |
 | Background/teardown         | Event-driven                    | Event-driven              | Cần soak test khi đóng trong lúc đang kết nối           | Theo dõi mọi client/stream, disconnect ở lock/quit        | Unit/integration test Windows                                  |
-| Đóng gói                    | NSIS + portable                 | AppImage + deb            | Chưa có icon phát hành; chưa ký                         | Bổ sung asset, code signing Windows, kiểm install sạch    | Cấu hình + CI; build tại máy hiện tại được ghi ở báo cáo chạy  |
+| Đóng gói                    | NSIS + portable                 | AppImage + deb            | Chưa ký số; icon riêng là tuỳ chọn, không bật mặc định  | Code signing Windows, kiểm install sạch                   | NSIS + portable build đạt trên máy hiện tại (v1.1.0)          |
 
 Jump Host và ba chế độ Port Forwarding đã đạt kiểm thử loopback; chưa được coi là đã xác minh
 đa nền tảng cho tới khi chạy trên máy thật của cả Windows và Ubuntu.
@@ -106,9 +108,13 @@ Jump Host và ba chế độ Port Forwarding đã đạt kiểm thử loopback; 
 - **Windows (máy hiện tại):** sau đợt rà soát 2, `npm test` đạt 211/211 và `npm run lint` sạch.
   Renderer đã tách thành ES module nạp qua `<script type="module">` — Electron cho phép module
   script trên `file://`, đã kiểm chứng bằng chính bộ test Electron.
+- **Đóng gói v1.1.0 (máy hiện tại):** `npm run build:win` chạy trọn vẹn, sinh cả
+  `SSH Manager-1.1.0-windows-x64-setup.exe` lẫn bản portable. Lỗi cache NSIS (`EPERM`)
+  của đợt trước không còn: electron-builder tự phát hiện cache hỏng và giải nén lại.
+  Bản đóng gói đã được kiểm chứng riêng — nạp `main.js` từ trong `app.asar` rồi soi
+  renderer: preload, xterm, font và các ES module đều nạp đúng, không lỗi console.
 - **Windows (đợt trước):** `npm test` đạt 167/167; bản unpacked được tạo thành công tại
-  `dist/win-unpacked`. NSIS/portable trong lượt rà soát này bị chặn ở cache NSIS ngoài
-  workspace (`EPERM`), không phải lỗi compile/package source.
+  `dist/win-unpacked`.
 - **Ubuntu 22.04/24.04:** đã rà source, có unit test adapter, cấu hình package và CI/Xvfb;
   chưa chạy trên máy Ubuntu trong phiên làm việc này nên chưa tuyên bố đạt kiểm thử thực tế.
 - Build dùng JavaScript fallback đã được kiểm thử của `ssh2`; `npmRebuild: false` tránh cố
