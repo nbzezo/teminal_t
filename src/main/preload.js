@@ -113,6 +113,12 @@ const api = {
   app: {
     info: () => ipcRenderer.invoke('app:info'),
   },
+
+  clipboard: {
+    readText: () => ipcRenderer.invoke('clipboard:readText'),
+    writeText: (text) => ipcRenderer.invoke('clipboard:writeText', text),
+    clearIfMatches: (expected) => ipcRenderer.invoke('clipboard:clearIfMatches', expected),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

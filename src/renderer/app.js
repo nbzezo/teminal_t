@@ -99,7 +99,9 @@ function renderHeader() {
     $('hb-subtitle').textContent = state.sessions.size ? state.sessions.size + ' phiên đang mở' : 'Chưa có phiên nào';
   }
   const connected = Boolean(session && session.status === 'connected');
-  for (const id of ['btn-split-v', 'btn-split-h', 'btn-dashboard']) $(id).disabled = !connected;
+  for (const id of ['btn-terminal-copy', 'btn-terminal-paste', 'btn-split-v', 'btn-split-h', 'btn-dashboard']) {
+    $(id).disabled = !connected;
+  }
 }
 
 function showError(elId, message) {
@@ -1458,6 +1460,41 @@ for (const overlay of document.querySelectorAll('.overlay')) {
   });
 }
 
+async function copyTerminalSelection() {
+  const session = activeConnectedSession();
+  if (!session) return;
+  if (!session.term.hasSelection()) return setStatus('Hãy chọn nội dung trong terminal trước khi copy.', 'error');
+  const copied = session.term.getSelection();
+  try {
+    await call(bridge.clipboard.writeText(copied));
+    const clearAfter = Number(state.settings.clipboardClearSeconds) || 0;
+    if (clearAfter > 0) {
+      setTimeout(() => call(bridge.clipboard.clearIfMatches(copied)).catch(() => {}), clearAfter * 1000);
+    }
+    setStatus('Đã copy ' + [...copied].length + ' ký tự Unicode.', 'ok');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+async function pasteTerminalClipboard() {
+  const session = activeConnectedSession();
+  if (!session) return;
+  try {
+    const text = await call(bridge.clipboard.readText());
+    if (!text) return setStatus('Clipboard đang trống.', undefined);
+    // xterm.paste giữ đúng UTF-8 và tự bọc bracketed-paste khi ứng dụng remote yêu cầu.
+    session.term.paste(text);
+    session.term.focus();
+    setStatus('Đã paste ' + [...text].length + ' ký tự Unicode.', 'ok');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+$('btn-terminal-copy').addEventListener('click', copyTerminalSelection);
+$('btn-terminal-paste').addEventListener('click', pasteTerminalClipboard);
+
 document.addEventListener('keydown', (event) => {
   // Đang gõ tiếng Việt thì nhường toàn bộ phím cho bộ gõ; đặc biệt là Escape,
   // vốn dùng để huỷ từ đang soạn chứ không phải để đóng hộp thoại.
@@ -1473,31 +1510,14 @@ document.addEventListener('keydown', (event) => {
 
   // Sao chép / dán theo quy ước GNOME Terminal: trong terminal, Ctrl+C là tín
   // hiệu ngắt tiến trình nên phải thêm Shift mới là sao chép.
-  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'c') {
+  if ((ctrl && event.shiftKey && event.key.toLowerCase() === 'c') || (ctrl && event.key === 'Insert')) {
     event.preventDefault();
-    const session = state.sessions.get(state.activeSessionId);
-    if (session && session.term.hasSelection()) {
-      const copied = session.term.getSelection();
-      navigator.clipboard.writeText(copied);
-      const clearAfter = Number(state.settings.clipboardClearSeconds) || 0;
-      if (clearAfter > 0) {
-        setTimeout(async () => {
-          try {
-            if ((await navigator.clipboard.readText()) === copied) await navigator.clipboard.writeText('');
-          } catch {}
-        }, clearAfter * 1000);
-      }
-      setStatus('Đã sao chép vùng chọn.', 'ok');
-    }
+    copyTerminalSelection();
     return;
   }
-  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'v') {
+  if ((ctrl && event.shiftKey && event.key.toLowerCase() === 'v') || (event.shiftKey && event.key === 'Insert')) {
     event.preventDefault();
-    if (state.activeSessionId) {
-      navigator.clipboard.readText().then((text) => {
-        if (text) bridge.ssh.input(state.activeSessionId, text);
-      });
-    }
+    pasteTerminalClipboard();
     return;
   }
 

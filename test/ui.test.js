@@ -53,6 +53,7 @@ app.whenReady().then(async () => {
       vaultApi: typeof window.api?.vault?.unlock,
       sshApi: typeof window.api?.ssh?.open,
       metricsApi: typeof window.api?.ssh?.metrics,
+      clipboardApi: typeof window.api?.clipboard?.writeText,
       nodeLeak: typeof window.require,
       processLeak: typeof window.process,
       terminal: typeof Terminal,
@@ -61,6 +62,7 @@ app.whenReady().then(async () => {
     })`);
     check('preload lộ đúng window.api', env.api === 'object' && env.vaultApi === 'function' && env.sshApi === 'function', env);
     check('preload chỉ expose dashboard metrics chuyên biệt', env.metricsApi === 'function', env);
+    check('preload expose clipboard native có giới hạn', env.clipboardApi === 'function', env);
     check('renderer KHÔNG chạm được vào Node', env.nodeLeak === 'undefined' && env.processLeak === 'undefined', env);
     check('xterm + addon-fit nạp được từ node_modules', env.terminal === 'function' && env.fitAddon === 'function' && env.xtermCss, env);
     const advancedControls = await run(`({
@@ -90,6 +92,18 @@ app.whenReady().then(async () => {
       'vùng kéo cửa sổ không chồng hit-test của ba nút',
       windowHitRegions.controls === 'no-drag' && windowHitRegions.header === 'no-drag' && !windowHitRegions.overlap,
       windowHitRegions,
+    );
+    const clipboardRoundTrip = await run(`(async () => {
+      const sample = 'Tiếng Việt: Trường Sa — 日本語 — 😀';
+      const written = await window.api.clipboard.writeText(sample);
+      const read = await window.api.clipboard.readText();
+      await window.api.clipboard.clearIfMatches(sample);
+      return { written: written.ok, read: read.data, sample };
+    })()`);
+    check(
+      'clipboard native copy/paste giữ nguyên Unicode',
+      clipboardRoundTrip.written && clipboardRoundTrip.read === clipboardRoundTrip.sample,
+      clipboardRoundTrip,
     );
 
     // --- 2. Màn hình khoá ở chế độ tạo kho mới ---

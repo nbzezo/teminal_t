@@ -30,8 +30,8 @@ không có cách khôi phục.**
 | Lấy sẵn host có rồi     | Nút **Nhập config** đọc `~/.ssh/config`                                                                                |
 | Phân loại môi trường    | Chọn Development/Staging/Production; Production luôn cảnh báo trước khi kết nối                                        |
 | Sao chép cấu hình       | Mở form sửa rồi chọn **Sao chép**; credential vẫn nằm trong vault mã hoá                                               |
-| Sao chép trong terminal | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> (như GNOME Terminal — <kbd>Ctrl</kbd>+<kbd>C</kbd> vẫn là tín hiệu ngắt) |
-| Dán vào terminal        | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>                                                                          |
+| Sao chép trong terminal | Nút **⧉**, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> hoặc <kbd>Ctrl</kbd>+<kbd>Insert</kbd>; clipboard native Unicode |
+| Dán vào terminal        | Nút **▣**, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> hoặc <kbd>Shift</kbd>+<kbd>Insert</kbd>; bracketed paste        |
 | Tìm trong terminal      | <kbd>Ctrl</kbd>+<kbd>F</kbd>                                                                                           |
 | Khoá kho                | <kbd>Ctrl</kbd>+<kbd>L</kbd> — ngắt hết phiên và xoá khoá khỏi RAM                                                     |
 | Đổi master password     | Nút ⚙ trên thanh tiêu đề                                                                                               |

@@ -2,7 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme, clipboard } = require('electron');
 const { Vault } = require('./vault');
 const { SshManager, KnownHosts, detectAgent } = require('./ssh-manager');
 const { currentPlatform } = require('./platform');
@@ -154,6 +154,23 @@ function registerIpc() {
     platform: currentPlatform.id,
     platformLabel: currentPlatform.label,
   }));
+
+  handle('clipboard:readText', () => {
+    if (!mainWindow || !mainWindow.isFocused()) throw new Error('Chỉ được paste khi ứng dụng đang được focus');
+    return clipboard.readText().slice(0, 1024 * 1024);
+  });
+  handle('clipboard:writeText', (text) => {
+    if (!mainWindow || !mainWindow.isFocused()) throw new Error('Chỉ được copy khi ứng dụng đang được focus');
+    if (typeof text !== 'string' || text.length > 1024 * 1024) throw new Error('Nội dung clipboard không hợp lệ');
+    clipboard.writeText(text);
+    return true;
+  });
+  handle('clipboard:clearIfMatches', (expected) => {
+    if (typeof expected !== 'string' || expected.length > 1024 * 1024) return false;
+    if (clipboard.readText() !== expected) return false;
+    clipboard.clear();
+    return true;
+  });
 
   handle('vault:status', () => vault.status());
   handle('vault:init', (password) => vault.init(password));
