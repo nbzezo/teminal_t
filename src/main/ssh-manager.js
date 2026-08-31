@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const net = require('net');
 const { StringDecoder } = require('string_decoder');
 const { Client } = require('ssh2');
+const { collectServerMetrics } = require('./server-metrics');
 const { currentPlatform } = require('./platform');
 const {
   validateHost,
@@ -317,6 +318,13 @@ class SshManager {
   resize(sessionId, cols, rows) {
     const entry = this.sessions.get(sessionId);
     if (entry && entry.stream) entry.stream.setWindow(rows, cols, 0, 0);
+  }
+
+  probeMetrics(sessionId) {
+    sessionId = validateId(sessionId, 'Session ID');
+    const entry = this.sessions.get(sessionId);
+    if (!entry || !entry.stream) throw new Error('Phiên SSH chưa kết nối');
+    return collectServerMetrics(entry.client);
   }
 
   startLocalTunnel(sessionId, input) {

@@ -23,6 +23,7 @@ không có cách khôi phục.**
 | Tìm và kết nối nhanh    | <kbd>Ctrl</kbd>+<kbd>K</kbd>, gõ tên/host, <kbd>Enter</kbd>                                                            |
 | Lọc danh sách           | Ô tìm kiếm ở cột trái (khớp tên, host, user, nhóm, ghi chú)                                                            |
 | Nhiều phiên cùng lúc    | Mỗi lần kết nối mở một tab riêng; <kbd>Ctrl</kbd>+<kbd>Tab</kbd> để chuyển                                             |
+| Chia terminal           | Nút **▥/⬒** hoặc <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E/O</kbd>; tối đa 4 pane độc lập trong một workspace             |
 | Đóng phiên              | <kbd>Ctrl</kbd>+<kbd>W</kbd> hoặc dấu × trên tab                                                                       |
 | Lệnh dùng nhiều         | Lưu/tìm theo tên, nhóm hoặc nội dung ở thanh **Lệnh nhanh**; hỗ trợ biến `${name}` và điền trước khi gửi               |
 | Lệnh chạy tự động       | Điền ô _Lệnh chạy ngay khi kết nối_ trong form máy chủ                                                                 |
@@ -42,6 +43,7 @@ không có cách khôi phục.**
 | Ghi log phiên           | Chọn nút **●** trong phiên; luôn có cảnh báo dữ liệu nhạy cảm và mặc định tắt                                          |
 | Tự kết nối lại          | Bật trong cấu hình máy chủ; retry 1/2/4 giây, tối đa 3 lần và không chạy lại `onConnect`                               |
 | Tuỳ chỉnh terminal      | ⚙ → chọn font, cỡ chữ và màu nền; áp dụng ngay cho các tab đang mở                                                     |
+| Dashboard máy chủ       | Nút **◴** trong phiên đã kết nối; CPU/RAM/disk/uptime/load tự làm mới mỗi 10 giây, chỉ đọc và không cài agent           |
 
 Máy chủ được xếp theo nhóm, trong mỗi nhóm ưu tiên máy vừa dùng gần nhất.
 

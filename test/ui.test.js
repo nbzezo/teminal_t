@@ -52,6 +52,7 @@ app.whenReady().then(async () => {
       api: typeof window.api,
       vaultApi: typeof window.api?.vault?.unlock,
       sshApi: typeof window.api?.ssh?.open,
+      metricsApi: typeof window.api?.ssh?.metrics,
       nodeLeak: typeof window.require,
       processLeak: typeof window.process,
       terminal: typeof Terminal,
@@ -59,8 +60,16 @@ app.whenReady().then(async () => {
       xtermCss: !!document.querySelector('link[href*="xterm.css"]')
     })`);
     check('preload lộ đúng window.api', env.api === 'object' && env.vaultApi === 'function' && env.sshApi === 'function', env);
+    check('preload chỉ expose dashboard metrics chuyên biệt', env.metricsApi === 'function', env);
     check('renderer KHÔNG chạm được vào Node', env.nodeLeak === 'undefined' && env.processLeak === 'undefined', env);
     check('xterm + addon-fit nạp được từ node_modules', env.terminal === 'function' && env.fitAddon === 'function' && env.xtermCss, env);
+    const advancedControls = await run(`({
+      splitVertical: !!document.getElementById('btn-split-v'),
+      splitHorizontal: !!document.getElementById('btn-split-h'),
+      dashboard: !!document.getElementById('btn-dashboard'),
+      dashboardModal: !!document.getElementById('dashboard-modal')
+    })`);
+    check('giao diện có điều khiển split nhiều pane và dashboard', Object.values(advancedControls).every(Boolean), advancedControls);
 
     // --- 2. Màn hình khoá ở chế độ tạo kho mới ---
     const lock = await run(`({

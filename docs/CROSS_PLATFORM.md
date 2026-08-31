@@ -68,10 +68,12 @@ QWebEngineView + xterm.js. Dependency và chi phí đóng gói Chromium vốn đ
 | SSH private key             |      Bắt buộc |           Bắt buộc | Ed25519 loopback                                         |
 | SSH Agent                   |    Nếu hỗ trợ |         Nếu hỗ trợ | unit test adapter; thủ công với agent thật               |
 | Terminal tương tác          |      Bắt buộc |           Bắt buộc | PTY/input/resize/UTF-8 tự động; app full-screen thủ công |
+| Split terminal 1–4 pane     |      Bắt buộc |           Bắt buộc | UI/lifecycle test; cần thử resize trên máy thật          |
+| Dashboard Linux            |      Bắt buộc |           Bắt buộc | Parser unit test; cần thử nhiều distro                   |
 | SFTP upload/download        |      Bắt buộc |           Bắt buộc | Mock integration đạt; cần test máy Ubuntu thật           |
-| Jump Host                   |      Bắt buộc |           Bắt buộc | Chưa triển khai                                          |
+| Jump Host                   |      Bắt buộc |           Bắt buộc | Loopback integration đạt                                 |
 | Port forwarding             |      Bắt buộc |           Bắt buộc | Mock TCP integration đạt; cần test máy thật              |
-| Import/export cấu hình      |      Bắt buộc |           Bắt buộc | Import có test; export chưa triển khai                   |
+| Import/export cấu hình      |      Bắt buộc |           Bắt buộc | Backup/import mã hóa round-trip đạt                      |
 | Đóng gói                    |      Bắt buộc |           Bắt buộc | CI build NSIS/portable/AppImage/deb                      |
 
 ## GAP Analysis
@@ -83,6 +85,8 @@ QWebEngineView + xterm.js. Dependency và chi phí đóng gói Chromium vốn đ
 | SSH password/key/passphrase | Có                              | Có                        | Cần xác nhận thực tế trên Ubuntu                        | Chạy CI và checklist trên máy Ubuntu                      | Password/key test thực tế trên Windows; Ubuntu chờ CI/máy thật |
 | SSH Agent                   | Named pipe hoặc `SSH_AUTH_SOCK` | `SSH_AUTH_SOCK`           | Availability tùy dịch vụ/session desktop                | Fallback chọn key đã có                                   | Unit test adapter; chưa test agent thật                        |
 | Terminal xterm.js           | Có                              | Có                        | Chưa tự động hóa `vim/top/less` và IME Linux thật       | Test thủ công full-screen, clipboard, GNOME/KDE           | PTY/resize/UTF-8/UI test trên Windows                          |
+| Split terminal              | Có, tối đa 4 pane               | Có, tối đa 4 pane         | Cần thử compositor/DPI Ubuntu thật                      | Grid responsive, PTY resize từng pane                     | UI/source test Windows                                        |
+| Dashboard Linux             | Có qua SSH                      | Có qua SSH                | Remote Windows/BSD chưa hỗ trợ                          | Fixed read-only probe `/proc` + `df`, timeout/output cap  | Parser/collector unit test đạt                                |
 | Phím tắt                    | Có                              | Có                        | Clipboard phụ thuộc quyền clipboard desktop             | Kiểm thủ công GNOME/KDE; giữ Ctrl+C/Ctrl+D cho PTY        | Source + UI/IME test                                           |
 | Theme/font/DPI              | Có                              | Có                        | Frameless window/compositor và scaling cần máy thật     | Test 100/125/150/200%, GNOME Wayland/X11, KDE             | Theme test Windows; Ubuntu chờ CI/máy thật                     |
 | System tray/notification    | Không                           | Không                     | Chưa có tính năng; không ảnh hưởng startup              | Chỉ triển khai khi có yêu cầu sản phẩm                    | Rà source                                                      |
@@ -99,7 +103,7 @@ Jump Host và ba chế độ Port Forwarding đã đạt kiểm thử loopback; 
 
 ## Trạng thái kiểm chứng ngày 2026-08-31
 
-- **Windows (máy hiện tại):** `npm test` đạt 162/162; bản unpacked được tạo thành công tại
+- **Windows (máy hiện tại):** `npm test` đạt 167/167; bản unpacked được tạo thành công tại
   `dist/win-unpacked`. NSIS/portable trong lượt rà soát này bị chặn ở cache NSIS ngoài
   workspace (`EPERM`), không phải lỗi compile/package source.
 - **Ubuntu 22.04/24.04:** đã rà source, có unit test adapter, cấu hình package và CI/Xvfb;

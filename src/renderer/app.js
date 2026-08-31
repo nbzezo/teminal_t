@@ -62,6 +62,8 @@ const state = {
   sftpPath: '/',
   sftpRoot: '/',
   activeTransferId: null,
+  workspaceLayouts: new Map(),
+  dashboardTimer: null,
 };
 
 /* =========================================================================
@@ -96,6 +98,8 @@ function renderHeader() {
     $('hb-title').textContent = 'SSH Manager';
     $('hb-subtitle').textContent = state.sessions.size ? state.sessions.size + ' phiên đang mở' : 'Chưa có phiên nào';
   }
+  const connected = Boolean(session && session.status === 'connected');
+  for (const id of ['btn-split-v', 'btn-split-h', 'btn-dashboard']) $(id).disabled = !connected;
 }
 
 function showError(elId, message) {
@@ -205,6 +209,8 @@ $('lock-form').addEventListener('submit', async (event) => {
 
 async function lockVault() {
   clearTimeout(autoLockTimer);
+  clearInterval(state.dashboardTimer);
+  state.dashboardTimer = null;
   for (const id of [...state.sessions.keys()]) closeSession(id, true);
   await call(bridge.vault.lock());
   state.connections = [];
@@ -364,11 +370,12 @@ $('search').addEventListener('input', (event) => {
  * Phiên SSH và tab
  * ========================================================================= */
 
-async function openSession(connId) {
+async function openSession(connId, options = {}) {
   const conn = state.connections.find((c) => c.id === connId);
   if (!conn) return;
 
   const sessionId = crypto.randomUUID();
+  const workspaceId = options.workspaceId || sessionId;
 
   const pane = document.createElement('div');
   pane.className = 'term-pane';
@@ -405,8 +412,13 @@ async function openSession(connId) {
     manualClose: false,
     reconnectAttempts: 0,
     reconnectTimer: null,
+    workspaceId,
   };
   state.sessions.set(sessionId, session);
+  if (!state.workspaceLayouts.has(workspaceId)) state.workspaceLayouts.set(workspaceId, options.direction || 'vertical');
+  pane.addEventListener('mousedown', () => {
+    if (state.activeSessionId !== sessionId) activateSession(sessionId);
+  });
   activateSession(sessionId);
   renderTabs();
   renderConnections();
@@ -424,20 +436,25 @@ async function openSession(connId) {
 }
 
 function activateSession(sessionId) {
+  const selected = state.sessions.get(sessionId);
+  if (!selected) return;
   state.activeSessionId = sessionId;
+  const visible = [];
   for (const [id, session] of state.sessions) {
-    session.pane.hidden = id !== sessionId;
+    session.pane.hidden = session.workspaceId !== selected.workspaceId;
+    session.pane.classList.toggle('active-pane', id === sessionId);
+    if (!session.pane.hidden) visible.push(session);
   }
+  const terminals = $('terminals');
+  const direction = state.workspaceLayouts.get(selected.workspaceId) || 'vertical';
+  terminals.className = 'terminals split-' + Math.min(4, visible.length) + ' split-' + direction;
   $('empty-state').hidden = state.sessions.size > 0;
 
-  const session = state.sessions.get(sessionId);
-  if (session) {
-    // Chờ trình duyệt vẽ xong pane rồi mới đo kích thước
-    requestAnimationFrame(() => {
-      session.fit.fit();
-      session.term.focus();
-    });
-  }
+  // Chờ trình duyệt vẽ xong grid rồi mới đo từng PTY.
+  requestAnimationFrame(() => {
+    for (const session of visible) session.fit.fit();
+    selected.term.focus();
+  });
   renderTabs();
 }
 
@@ -450,11 +467,16 @@ function closeSession(sessionId, silent) {
   session.term.dispose();
   session.pane.remove();
   state.sessions.delete(sessionId);
+  const sameWorkspace = [...state.sessions.entries()].filter(([, item]) => item.workspaceId === session.workspaceId);
+  if (sameWorkspace.length === 0) state.workspaceLayouts.delete(session.workspaceId);
 
   if (state.activeSessionId === sessionId) {
-    const next = [...state.sessions.keys()].pop() || null;
+    const next = (sameWorkspace.pop() || [...state.sessions.entries()].pop() || [null])[0];
     state.activeSessionId = next;
     if (next) activateSession(next);
+  } else {
+    const active = state.sessions.get(state.activeSessionId);
+    if (active && active.workspaceId === session.workspaceId) activateSession(state.activeSessionId);
   }
   $('empty-state').hidden = state.sessions.size > 0;
   if (!silent) {
@@ -477,7 +499,8 @@ function renderTabs() {
     dot.className = 'tab-dot';
     const label = document.createElement('span');
     label.className = 'tab-label';
-    label.textContent = session.name;
+    const paneCount = [...state.sessions.values()].filter((item) => item.workspaceId === session.workspaceId).length;
+    label.textContent = session.name + (paneCount > 1 ? ' · ' + paneCount + ' pane' : '');
     const close = document.createElement('button');
     close.className = 'tab-close';
     close.type = 'button';
@@ -1071,6 +1094,77 @@ function activeConnectedSession() {
   return session;
 }
 
+async function splitActiveSession(direction) {
+  const session = activeConnectedSession();
+  if (!session) return;
+  const paneCount = [...state.sessions.values()].filter((item) => item.workspaceId === session.workspaceId).length;
+  if (paneCount >= 4) return setStatus('Mỗi workspace hỗ trợ tối đa 4 pane.', 'error');
+  state.workspaceLayouts.set(session.workspaceId, direction);
+  await openSession(session.connId, { workspaceId: session.workspaceId, direction });
+}
+
+function formatBytes(value) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = Number(value) || 0;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return (index > 1 ? size.toFixed(1) : Math.round(size)) + ' ' + units[index];
+}
+
+function formatUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return (days ? days + ' ngày ' : '') + hours + ' giờ ' + minutes + ' phút';
+}
+
+async function refreshDashboard() {
+  const session = activeConnectedSession();
+  if (!session || $('dashboard-modal').hidden) return;
+  const sessionId = state.activeSessionId;
+  clearError('dashboard-error');
+  $('dashboard-loading').hidden = false;
+  const conn = state.connections.find((item) => item.id === session.connId);
+  $('dashboard-subtitle').textContent = conn ? conn.username + '@' + conn.host : session.name;
+  try {
+    const metrics = await call(bridge.ssh.metrics(sessionId));
+    if (state.activeSessionId !== sessionId || $('dashboard-modal').hidden) return;
+    const memoryPercent = metrics.memoryTotal ? (metrics.memoryUsed / metrics.memoryTotal) * 100 : 0;
+    const diskPercent = metrics.diskTotal ? (metrics.diskUsed / metrics.diskTotal) * 100 : 0;
+    $('metric-cpu').textContent = metrics.cpuPercent.toFixed(1) + '%';
+    $('metric-load').textContent = metrics.loadAverage.length ? 'Load: ' + metrics.loadAverage.join(' · ') : '';
+    $('metric-memory').textContent = memoryPercent.toFixed(1) + '%';
+    $('metric-memory-detail').textContent = formatBytes(metrics.memoryUsed) + ' / ' + formatBytes(metrics.memoryTotal);
+    $('metric-disk').textContent = diskPercent.toFixed(1) + '%';
+    $('metric-disk-detail').textContent = formatBytes(metrics.diskUsed) + ' / ' + formatBytes(metrics.diskTotal);
+    $('metric-uptime').textContent = formatUptime(metrics.uptimeSeconds);
+    $('metric-collected').textContent = 'Cập nhật ' + new Date(metrics.collectedAt).toLocaleTimeString('vi-VN');
+    $('dashboard-grid').hidden = false;
+  } catch (err) {
+    showError('dashboard-error', err.message);
+  } finally {
+    $('dashboard-loading').hidden = true;
+  }
+}
+
+$('btn-split-v').addEventListener('click', () => splitActiveSession('vertical'));
+$('btn-split-h').addEventListener('click', () => splitActiveSession('horizontal'));
+$('btn-dashboard').addEventListener('click', () => {
+  openModal('dashboard-modal');
+  refreshDashboard();
+  clearInterval(state.dashboardTimer);
+  state.dashboardTimer = setInterval(() => {
+    if ($('dashboard-modal').hidden) {
+      clearInterval(state.dashboardTimer);
+      state.dashboardTimer = null;
+    } else refreshDashboard();
+  }, 10000);
+});
+$('dashboard-refresh').addEventListener('click', refreshDashboard);
+
 async function loadSftp(remotePath) {
   const session = activeConnectedSession();
   if (!session) return;
@@ -1334,7 +1428,13 @@ $('tunnel-form').addEventListener('submit', async (event) => {
 });
 
 for (const button of document.querySelectorAll('[data-close]')) {
-  button.addEventListener('click', () => closeModal(button.dataset.close));
+  button.addEventListener('click', () => {
+    closeModal(button.dataset.close);
+    if (button.dataset.close === 'dashboard-modal') {
+      clearInterval(state.dashboardTimer);
+      state.dashboardTimer = null;
+    }
+  });
 }
 
 // Bấm ra nền để đóng lớp phủ
@@ -1387,6 +1487,17 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'e') {
+    event.preventDefault();
+    splitActiveSession('vertical');
+    return;
+  }
+  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'o') {
+    event.preventDefault();
+    splitActiveSession('horizontal');
+    return;
+  }
+
   if (ctrl && event.key.toLowerCase() === 'f') {
     event.preventDefault();
     const session = state.sessions.get(state.activeSessionId);
@@ -1425,8 +1536,11 @@ let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    const session = state.sessions.get(state.activeSessionId);
-    if (session) session.fit.fit();
+    const active = state.sessions.get(state.activeSessionId);
+    if (!active) return;
+    for (const session of state.sessions.values()) {
+      if (session.workspaceId === active.workspaceId) session.fit.fit();
+    }
   }, 80);
 });
 

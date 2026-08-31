@@ -89,6 +89,9 @@
           </div>
 
           <div class="hb-actions hb-actions-right">
+            <button id="btn-split-v" class="hb-btn" title="Chia dọc terminal" aria-label="Chia dọc" disabled><span aria-hidden="true">▥</span></button>
+            <button id="btn-split-h" class="hb-btn" title="Chia ngang terminal" aria-label="Chia ngang" disabled><span aria-hidden="true">⬒</span></button>
+            <button id="btn-dashboard" class="hb-btn" title="Dashboard máy chủ" aria-label="Dashboard" disabled><span aria-hidden="true">◴</span></button>
             <button id="btn-sftp" class="hb-btn" title="Quản lý file SFTP" aria-label="SFTP">
               <span aria-hidden="true">⇄</span>
             </button>
@@ -534,6 +537,28 @@
           <span class="spacer"></span>
           <button type="button" class="btn btn-flat" data-close="tunnel-modal">Đóng</button>
         </footer>
+      </div>
+    </div>
+
+    <!-- ===================== Dashboard chỉ đọc ===================== -->
+    <div id="dashboard-modal" class="overlay" hidden>
+      <div class="dialog dashboard-dialog">
+        <header class="dialog-head">
+          <div><h2>Trạng thái máy chủ</h2><p id="dashboard-subtitle" class="dim dashboard-subtitle"></p></div>
+          <button id="dashboard-refresh" type="button" class="btn btn-flat btn-sm">Làm mới</button>
+        </header>
+        <div class="dialog-body">
+          <div id="dashboard-error" class="banner banner-error" hidden></div>
+          <div id="dashboard-loading" class="dashboard-loading dim">Đang lấy số liệu chỉ đọc…</div>
+          <div id="dashboard-grid" class="dashboard-grid" hidden>
+            <article class="metric-card"><span>CPU</span><strong id="metric-cpu">—</strong><small id="metric-load" class="dim"></small></article>
+            <article class="metric-card"><span>RAM</span><strong id="metric-memory">—</strong><small id="metric-memory-detail" class="dim"></small></article>
+            <article class="metric-card"><span>Ổ đĩa /</span><strong id="metric-disk">—</strong><small id="metric-disk-detail" class="dim"></small></article>
+            <article class="metric-card"><span>Uptime</span><strong id="metric-uptime">—</strong><small id="metric-collected" class="dim"></small></article>
+          </div>
+          <p class="row-note dim">Tự làm mới mỗi 10 giây. Chỉ dùng lệnh đọc `/proc` và `df`; không cài agent, không dùng sudo.</p>
+        </div>
+        <footer class="dialog-foot"><span class="spacer"></span><button type="button" class="btn btn-flat" data-close="dashboard-modal">Đóng</button></footer>
       </div>
     </div>
 

@@ -45,6 +45,7 @@ const api = {
     input: (sessionId, data) => ipcRenderer.send('ssh:input', sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.send('ssh:resize', sessionId, cols, rows),
     close: (sessionId) => ipcRenderer.invoke('ssh:close', sessionId),
+    metrics: (sessionId) => ipcRenderer.invoke('ssh:metrics', sessionId),
 
     onData: (handler) => {
       const listener = (_event, sessionId, data) => handler(sessionId, data);

@@ -498,14 +498,68 @@ kbd {
 .terminals {
   position: absolute;
   inset: 0;
+  display: grid;
+  gap: 2px;
+  background: var(--border);
 }
 .term-pane {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   padding: 8px 4px 4px 10px;
+  background: var(--term-bg);
+  border: 2px solid transparent;
+}
+.term-pane.active-pane {
+  border-color: var(--accent);
+}
+.terminals.split-2.split-vertical {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.terminals.split-2.split-horizontal {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.terminals.split-3,
+.terminals.split-4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 .term-pane[hidden] {
   display: none;
+}
+
+.dashboard-dialog {
+  width: min(720px, calc(100vw - 40px));
+}
+.dashboard-subtitle {
+  margin: 3px 0 0;
+  font-size: 12px;
+}
+.dashboard-loading {
+  padding: 24px;
+  text-align: center;
+}
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+}
+.metric-card strong {
+  font-size: 24px;
+  font-weight: 700;
+}
+.metric-card small {
+  min-height: 17px;
 }
 
 .empty-state {

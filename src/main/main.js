@@ -264,6 +264,7 @@ function registerIpc() {
     ssh.disconnect(sessionId);
     return true;
   });
+  handle('ssh:metrics', (sessionId) => ssh.probeMetrics(sessionId));
 
   handle('ssh:reconnect', (sessionId, connectionId, size) => {
     validateId(sessionId, 'Session ID');
