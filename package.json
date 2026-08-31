@@ -27,7 +27,11 @@
     "test:ime": "electron test/ime.test.js",
     "test:theme": "electron test/theme.test.js dark && electron test/theme.test.js light"
   },
-  "author": "",
+  "author": {
+    "name": "Dương Anh Tuấn",
+    "email": "anhtuanduongbk@gmail.com"
+  },
+  "homepage": "https://github.com/nbzezo/teminal_t",
   "license": "MIT",
   "build": {
     "appId": "com.local.sshman",
