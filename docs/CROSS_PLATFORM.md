@@ -125,8 +125,23 @@ Jump Host và ba chế độ Port Forwarding đã đạt kiểm thử loopback; 
     quản lý. `xvfb` không chạy window manager nào nên các giá trị đó không bao giờ đúng ở
     đó. `ui.test.js` nay khẳng định đường đi từ nút qua IPC tới `BrowserWindow` ở mọi nền
     tảng, còn trạng thái thật chỉ khẳng định trên Windows/macOS.
-- **CI:** job Windows xanh từ trước. Hai job Ubuntu đỏ liên tục kể cả ở các commit trước
-  đợt rà soát; nguyên nhân là hai điểm ở trên chứ không phải lỗi logic đa nền tảng.
+- **CI: xanh toàn bộ 5 job kể từ `0421a35`** — `test` trên windows-latest, ubuntu-22.04,
+  ubuntu-24.04 và `package` cho cả Windows lẫn Ubuntu, kèm artifact 379 MB và 344 MB.
+  Trước đó CI đỏ liên tục kể cả ở các commit trước đợt rà soát, vì năm nguyên nhân độc
+  lập, không cái nào là lỗi logic đa nền tảng:
+  1. Thiếu `libnss3`/`libnspr4`/`libasound2` — Electron chết ngay trên Ubuntu sạch.
+  2. Ubuntu 24.04 khoá user namespace không đặc quyền — Chromium không dựng được sandbox,
+     thoát bằng `SIGTRAP`.
+  3. `ui.test.js` khẳng định `isMinimized()`, thứ cần window manager mà `xvfb` không có.
+  4. `ui.test.js` kiểm clipboard round-trip, nhưng rào chắn `isFocused()` chặn đúng như
+     thiết kế khi không có window manager.
+  5. electron-builder tự publish lên GitHub Releases khi thấy biến môi trường CI rồi chết
+     vì không có `GH_TOKEN` — cần `--publish never`.
+  Ngoài ra `package.json` thiếu `homepage` và `author.email` nên gói `.deb` không đóng
+  được; đây là lỗi thật của cấu hình, không phải của môi trường CI.
+- Cảnh báo còn lại trên CI: `actions/checkout@v4`, `setup-node@v4` và `upload-artifact@v4`
+  chạy trên Node 20 đã hết hạn hỗ trợ, GitHub đang ép chúng sang Node 24. Chưa chặn gì,
+  nhưng nên nâng lên `@v5` trước khi GitHub gỡ hẳn.
 - Build dùng JavaScript fallback đã được kiểm thử của `ssh2`; `npmRebuild: false` tránh cố
   biên dịch addon tăng tốc `cpu-features` không bắt buộc, vốn dễ lỗi khi workspace Windows có
   khoảng trắng. Cần giữ SSH integration test trong CI để bảo vệ fallback này.
