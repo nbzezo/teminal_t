@@ -108,18 +108,34 @@ app.whenReady().then(async () => {
       windowHitRegions.controls === 'no-drag' && windowHitRegions.header === 'no-drag' && !windowHitRegions.overlap,
       windowHitRegions,
     );
+    // Clipboard chỉ mở khi cửa sổ đang được focus — rào chắn có chủ ý, chặn
+    // renderer đọc trộm clipboard lúc ứng dụng chạy nền. xvfb trên CI không có
+    // window manager nên cửa sổ có thể không bao giờ được focus; ở môi trường đó
+    // kiểm chính rào chắn thay vì kiểm vòng round-trip, chứ không nới rào chắn
+    // ra chỉ để CI xanh.
+    win.focus();
+    await wait(300);
+    const windowFocusable = win.isFocused();
     const clipboardRoundTrip = await run(`(async () => {
       const sample = 'Tiếng Việt: Trường Sa — 日本語 — 😀';
       const written = await window.api.clipboard.writeText(sample);
       const read = await window.api.clipboard.readText();
       await window.api.clipboard.clearIfMatches(sample);
-      return { written: written.ok, read: read.data, sample };
+      return { written: written.ok, error: written.error, read: read.data, sample };
     })()`);
-    check(
-      'clipboard native copy/paste giữ nguyên Unicode',
-      clipboardRoundTrip.written && clipboardRoundTrip.read === clipboardRoundTrip.sample,
-      clipboardRoundTrip,
-    );
+    if (windowFocusable) {
+      check(
+        'clipboard native copy/paste giữ nguyên Unicode',
+        clipboardRoundTrip.written && clipboardRoundTrip.read === clipboardRoundTrip.sample,
+        clipboardRoundTrip,
+      );
+    } else {
+      check(
+        'cửa sổ không được focus thì clipboard bị chặn đúng như thiết kế',
+        clipboardRoundTrip.written === false && /focus/i.test(clipboardRoundTrip.error || ''),
+        clipboardRoundTrip,
+      );
+    }
     const terminalImeIsolation = await run(`(() => {
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;width:400px;height:200px;left:-1000px;top:0';
