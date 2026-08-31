@@ -204,15 +204,16 @@ kbd {
 }
 
 .hb-titles {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  padding: 0 12px;
   line-height: 1.2;
   pointer-events: none;
-  max-width: 60%;
   -webkit-app-region: drag;
   app-region: drag;
 }
@@ -243,7 +244,7 @@ kbd {
   app-region: no-drag;
 }
 .hb-actions-right {
-  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .hb-btn {
@@ -264,6 +265,30 @@ kbd {
 }
 .hb-btn:active {
   background: var(--active);
+}
+
+/* Ở chiều rộng tối thiểu vẫn dành đủ chỗ cho tên phiên, thanh công cụ và ba
+   nút cửa sổ. Các nút chỉ thu gọn khoảng cách, không mất chức năng. */
+@media (max-width: 1050px) {
+  :root {
+    --sidebar-w: 240px;
+  }
+  .window-controls {
+    gap: 8px;
+    padding-right: 10px;
+  }
+  .hb-pane-main {
+    padding-right: 112px;
+  }
+  .hb-titles {
+    padding: 0 6px;
+  }
+  .hb-actions {
+    gap: 1px;
+  }
+  .hb-btn {
+    width: 30px;
+  }
 }
 
 /* ============================ Bố cục ============================ */

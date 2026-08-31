@@ -188,6 +188,31 @@ app.whenReady().then(async () => {
     check('tạo kho xong thì vào được giao diện chính', unlocked.appShown && unlocked.lockHidden, unlocked);
     check('danh sách rỗng hiển thị hướng dẫn', unlocked.emptyList.includes('Chưa có máy chủ nào'), unlocked.emptyList);
 
+    // Header phải giữ ba vùng tách biệt ngay tại kích thước cửa sổ tối thiểu.
+    win.setSize(900, 600);
+    await wait(150);
+    const compactHeader = await run(`(() => {
+      const title = document.querySelector('.hb-titles').getBoundingClientRect();
+      const actions = document.querySelector('.hb-actions-right').getBoundingClientRect();
+      const controls = document.querySelector('.window-controls').getBoundingClientRect();
+      return {
+        titleRight: title.right,
+        actionsLeft: actions.left,
+        actionsRight: actions.right,
+        controlsLeft: controls.left,
+        titleWidth: title.width
+      };
+    })()`);
+    check(
+      'header thu nhỏ không chồng tên, icon công cụ và nút cửa sổ',
+      compactHeader.titleWidth > 0 &&
+        compactHeader.titleRight <= compactHeader.actionsLeft &&
+        compactHeader.actionsRight <= compactHeader.controlsLeft,
+      compactHeader,
+    );
+    win.setSize(1280, 820);
+    await wait(150);
+
     // --- 5. Thêm kết nối qua form ---
     await run(`(() => {
       document.getElementById('btn-new').click();
