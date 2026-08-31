@@ -151,6 +151,53 @@ function liveCount(connId) {
   return n;
 }
 
+/**
+ * Nối đầu vào xterm với SSH và bù cho trường hợp Chromium/UniKey gửi keyCode
+ * 229 + InputEvent(insertText) nhưng xterm 5.x không phát onData. Bộ đếm đảm
+ * bảo fallback chỉ chạy nếu xterm chưa tự gửi dữ liệu của chính lần nhấn phím.
+ */
+function wireTerminalInput(term, sendInput) {
+  let dataSerial = 0;
+  let serialBeforeKeydown = null;
+  let compositionActive = false;
+  let compositionJustEnded = false;
+
+  term.onData((data) => {
+    dataSerial += 1;
+    sendInput(data);
+  });
+
+  if (!term.textarea) return;
+  term.textarea.addEventListener('keydown', () => {
+    serialBeforeKeydown = dataSerial;
+  }, true);
+  term.textarea.addEventListener('compositionstart', () => {
+    compositionActive = true;
+    serialBeforeKeydown = null;
+  }, true);
+  term.textarea.addEventListener('compositionend', () => {
+    compositionActive = false;
+    compositionJustEnded = true;
+    setTimeout(() => {
+      compositionJustEnded = false;
+    }, 0);
+  }, true);
+  term.textarea.addEventListener('input', (event) => {
+    if (
+      compositionActive || compositionJustEnded || event.isComposing ||
+      event.inputType !== 'insertText' || !event.data
+    ) return;
+    const baseline = serialBeforeKeydown ?? dataSerial;
+    serialBeforeKeydown = null;
+    const text = event.data;
+    queueMicrotask(() => {
+      if (dataSerial !== baseline) return;
+      dataSerial += 1;
+      sendInput(text);
+    });
+  }, true);
+}
+
 /* =========================================================================
  * Màn hình khoá
  * ========================================================================= */
@@ -398,9 +445,18 @@ async function openSession(connId, options = {}) {
   term.loadAddon(fit);
   term.loadAddon(search);
   term.open(pane);
+  // xterm nhận văn bản từ textarea ẩn này. Nhường composition hoàn toàn cho
+  // UniKey/Windows IME và không để trình duyệt tự sửa văn bản đầu vào.
+  if (term.textarea) {
+    term.textarea.lang = 'vi';
+    term.textarea.spellcheck = false;
+    term.textarea.setAttribute('autocapitalize', 'off');
+    term.textarea.setAttribute('autocomplete', 'off');
+    term.textarea.setAttribute('autocorrect', 'off');
+  }
   fit.fit();
 
-  term.onData((data) => bridge.ssh.input(sessionId, data));
+  wireTerminalInput(term, (data) => bridge.ssh.input(sessionId, data));
   term.onResize(({ cols, rows }) => bridge.ssh.resize(sessionId, cols, rows));
 
   const session = {

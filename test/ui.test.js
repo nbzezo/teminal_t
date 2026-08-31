@@ -105,6 +105,51 @@ app.whenReady().then(async () => {
       clipboardRoundTrip.written && clipboardRoundTrip.read === clipboardRoundTrip.sample,
       clipboardRoundTrip,
     );
+    const terminalImeIsolation = await run(`(() => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;width:400px;height:200px;left:-1000px;top:0';
+      document.body.appendChild(host);
+      const terminal = new Terminal();
+      terminal.open(host);
+      const textarea = terminal.textarea;
+      const style = getComputedStyle(textarea);
+      const result = {
+        helper: textarea.classList.contains('xterm-helper-textarea'),
+        border: style.borderStyle
+      };
+      terminal.dispose();
+      host.remove();
+      return result;
+    })()`);
+    check(
+      'textarea IME của xterm không bị CSS biểu mẫu ghi đè',
+      terminalImeIsolation.helper && terminalImeIsolation.border === 'none',
+      terminalImeIsolation,
+    );
+    const unikeyFallback = await run(`(async () => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;width:400px;height:200px;left:-1000px;top:0';
+      document.body.appendChild(host);
+      const terminal = new Terminal();
+      terminal.open(host);
+      const sent = [];
+      wireTerminalInput(terminal, (data) => sent.push(data));
+      const keydown = new KeyboardEvent('keydown', {key:'Process', code:'KeyD', bubbles:true});
+      Object.defineProperty(keydown, 'keyCode', {value: 229});
+      terminal.textarea.dispatchEvent(keydown);
+      terminal.textarea.dispatchEvent(new InputEvent('input', {
+        data: 'đ', inputType: 'insertText', bubbles: true, composed: true
+      }));
+      await Promise.resolve();
+      terminal.dispose();
+      host.remove();
+      return sent;
+    })()`);
+    check(
+      'UniKey keyCode 229 gửi đúng một ký tự Unicode vào PTY',
+      unikeyFallback.length === 1 && unikeyFallback[0] === 'đ',
+      unikeyFallback,
+    );
 
     // --- 2. Màn hình khoá ở chế độ tạo kho mới ---
     const lock = await run(`({

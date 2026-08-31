@@ -155,19 +155,20 @@ function registerIpc() {
     platformLabel: currentPlatform.label,
   }));
 
-  handle('clipboard:readText', () => {
+  handle('clipboard:readText', async () => {
     if (!mainWindow || !mainWindow.isFocused()) throw new Error('Chỉ được paste khi ứng dụng đang được focus');
-    return clipboard.readText().slice(0, 1024 * 1024);
+    const text = await clipboard.readText();
+    return text.slice(0, 1024 * 1024);
   });
-  handle('clipboard:writeText', (text) => {
+  handle('clipboard:writeText', async (text) => {
     if (!mainWindow || !mainWindow.isFocused()) throw new Error('Chỉ được copy khi ứng dụng đang được focus');
     if (typeof text !== 'string' || text.length > 1024 * 1024) throw new Error('Nội dung clipboard không hợp lệ');
-    clipboard.writeText(text);
+    await clipboard.writeText(text);
     return true;
   });
-  handle('clipboard:clearIfMatches', (expected) => {
+  handle('clipboard:clearIfMatches', async (expected) => {
     if (typeof expected !== 'string' || expected.length > 1024 * 1024) return false;
-    if (clipboard.readText() !== expected) return false;
+    if ((await clipboard.readText()) !== expected) return false;
     clipboard.clear();
     return true;
   });

@@ -32,6 +32,7 @@ không có cách khôi phục.**
 | Sao chép cấu hình       | Mở form sửa rồi chọn **Sao chép**; credential vẫn nằm trong vault mã hoá                                               |
 | Sao chép trong terminal | Nút **⧉**, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> hoặc <kbd>Ctrl</kbd>+<kbd>Insert</kbd>; clipboard native Unicode |
 | Dán vào terminal        | Nút **▣**, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> hoặc <kbd>Shift</kbd>+<kbd>Insert</kbd>; bracketed paste        |
+| Gõ tiếng Việt           | UniKey bảng mã **Unicode** (Telex/VNI); ký tự `keyCode 229` được chuyển nguyên vẹn qua SSH                              |
 | Tìm trong terminal      | <kbd>Ctrl</kbd>+<kbd>F</kbd>                                                                                           |
 | Khoá kho                | <kbd>Ctrl</kbd>+<kbd>L</kbd> — ngắt hết phiên và xoá khoá khỏi RAM                                                     |
 | Đổi master password     | Nút ⚙ trên thanh tiêu đề                                                                                               |
