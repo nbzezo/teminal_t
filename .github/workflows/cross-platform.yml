@@ -27,6 +27,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libnss3 libnspr4
           sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2
+      # Ubuntu 24.04 khoá user namespace không đặc quyền bằng AppArmor, làm sandbox
+      # của Chromium không dựng được. Ứng dụng chạy renderer với sandbox: true nên
+      # nới đúng cái khoá đó ở CI thay vì tắt sandbox — tắt sandbox là kiểm thử
+      # một cấu hình khác với cấu hình phát hành.
+      - name: Allow unprivileged user namespaces (Ubuntu 24.04)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Test on Windows
         if: runner.os == 'Windows'
         run: npm test
