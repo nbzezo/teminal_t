@@ -136,6 +136,8 @@ kbd {
   padding-right: 16px;
   z-index: 200;
   -webkit-app-region: no-drag;
+  app-region: no-drag;
+  pointer-events: auto;
 }
 
 .wc {
@@ -151,6 +153,10 @@ kbd {
   cursor: default;
   padding: 0;
   transition: background 0.1s;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  pointer-events: auto;
+  user-select: none;
 }
 .wc:hover {
   background: var(--button-hover);
@@ -172,7 +178,10 @@ kbd {
   display: flex;
   background: var(--headerbar-bg);
   border-bottom: 1px solid var(--headerbar-border);
-  -webkit-app-region: drag;
+  /* Không đánh dấu toàn bộ header là drag: vùng này nằm bên dưới các nút
+     cửa sổ fixed và Chromium có thể ưu tiên native drag hit-test. */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .hb-pane {
@@ -204,6 +213,12 @@ kbd {
   line-height: 1.2;
   pointer-events: none;
   max-width: 60%;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+.hb-pane-sidebar > .hb-title {
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 .hb-title {
   font-weight: 700;
@@ -225,6 +240,7 @@ kbd {
   align-items: center;
   gap: 4px;
   -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 .hb-actions-right {
   margin-left: auto;
@@ -1024,9 +1040,11 @@ textarea::placeholder {
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
+  /* Chừa hẳn vùng native hit-test cho ba nút cửa sổ. */
+  right: 128px;
   height: var(--headerbar-h);
   -webkit-app-region: drag;
+  app-region: drag;
 }
 .lock-dialog {
   width: 360px;

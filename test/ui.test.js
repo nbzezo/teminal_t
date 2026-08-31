@@ -70,6 +70,27 @@ app.whenReady().then(async () => {
       dashboardModal: !!document.getElementById('dashboard-modal')
     })`);
     check('giao diện có điều khiển split nhiều pane và dashboard', Object.values(advancedControls).every(Boolean), advancedControls);
+    const windowHitRegions = await run(`(() => {
+      const controls = document.querySelector('.window-controls');
+      const lockDrag = document.querySelector('.lock-drag');
+      const header = document.querySelector('.headerbar');
+      const controlRect = controls.getBoundingClientRect();
+      const dragRect = lockDrag.getBoundingClientRect();
+      const region = (element) => {
+        const style = getComputedStyle(element);
+        return style.webkitAppRegion || style.getPropertyValue('-webkit-app-region');
+      };
+      return {
+        controls: region(controls),
+        header: region(header),
+        overlap: dragRect.right > controlRect.left
+      };
+    })()`);
+    check(
+      'vùng kéo cửa sổ không chồng hit-test của ba nút',
+      windowHitRegions.controls === 'no-drag' && windowHitRegions.header === 'no-drag' && !windowHitRegions.overlap,
+      windowHitRegions,
+    );
 
     // --- 2. Màn hình khoá ở chế độ tạo kho mới ---
     const lock = await run(`({
@@ -253,7 +274,28 @@ app.whenReady().then(async () => {
     })`);
     check('đóng tab thì quay lại trạng thái rỗng', closed.tabs === 0 && closed.emptyShown, closed);
 
-    // --- 14. Không có lỗi console ---
+    // --- 14. Điều khiển cửa sổ gọi đúng BrowserWindow ---
+    await run(`document.getElementById('wc-max').click()`);
+    await wait(300);
+    check('nút phóng to thay đổi trạng thái BrowserWindow', win.isMaximized());
+    await run(`document.getElementById('wc-max').click()`);
+    await wait(300);
+    check('nút phóng to lần hai khôi phục cửa sổ', !win.isMaximized());
+    await run(`document.getElementById('wc-min').click()`);
+    await wait(300);
+    check('nút thu nhỏ thay đổi trạng thái BrowserWindow', win.isMinimized());
+    win.restore();
+    await wait(200);
+    let closeRequested = false;
+    win.once('close', (event) => {
+      closeRequested = true;
+      event.preventDefault();
+    });
+    await run(`document.getElementById('wc-close').click()`);
+    await wait(300);
+    check('nút đóng gọi BrowserWindow.close', closeRequested);
+
+    // --- 15. Không có lỗi console ---
     check('không có lỗi console trong renderer', errors.length === 0, errors.slice(0, 5));
 
     console.log('\n' + passed + ' PASS, ' + failed + ' FAIL');

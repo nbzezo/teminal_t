@@ -1058,9 +1058,23 @@ $('btn-import-backup').addEventListener('click', async () => {
  * ========================================================================= */
 
 // --- Nút cửa sổ (cửa sổ không khung nên trang tự vẽ) ---
-$('wc-min').addEventListener('click', () => bridge.window.minimize());
-$('wc-close').addEventListener('click', () => bridge.window.close());
-$('wc-max').addEventListener('click', () => bridge.window.toggleMaximize());
+function bindWindowControl(id, action) {
+  const button = $(id);
+  // Không để pointerdown bị vùng titlebar draggable của Chromium nhận trước.
+  button.addEventListener('pointerdown', (event) => event.stopPropagation());
+  button.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await call(action());
+    } catch (err) {
+      setStatus(err.message, 'error');
+    }
+  });
+}
+bindWindowControl('wc-min', () => bridge.window.minimize());
+bindWindowControl('wc-close', () => bridge.window.close());
+bindWindowControl('wc-max', () => bridge.window.toggleMaximize());
 
 bridge.window.onStateChange(({ maximized }) => {
   document.body.classList.toggle('maximized', maximized);
