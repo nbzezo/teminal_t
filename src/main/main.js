@@ -1,9 +1,12 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme } = require('electron');
 const { Vault } = require('./vault');
 const { SshManager, KnownHosts, detectAgent } = require('./ssh-manager');
+const { currentPlatform } = require('./platform');
+const { inspectCommand, safeErrorMessage, validateId, clampTerminalSize } = require('./validation');
 
 const isDev = process.argv.includes('--dev');
 
@@ -28,7 +31,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // preload cần require('electron') và các module cục bộ
+      sandbox: true,
       spellcheck: false,
     },
   });
@@ -102,11 +105,14 @@ async function confirmHostKey({ host, port, fingerprint, changed, previous }) {
 
 /** Bọc handler IPC để lỗi trả về renderer dưới dạng dữ liệu, không phải exception. */
 function handle(channel, fn) {
-  ipcMain.handle(channel, async (_event, ...args) => {
+  ipcMain.handle(channel, async (event, ...args) => {
     try {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        throw new Error('Nguồn IPC không được phép');
+      }
       return { ok: true, data: await fn(...args) };
     } catch (err) {
-      return { ok: false, error: err.message || String(err) };
+      return { ok: false, error: safeErrorMessage(err) };
     }
   });
 }
@@ -116,7 +122,8 @@ function registerIpc() {
     version: app.getVersion(),
     vaultPath: vault.filePath,
     agent: detectAgent(),
-    platform: process.platform,
+    platform: currentPlatform.id,
+    platformLabel: currentPlatform.label,
   }));
 
   handle('vault:status', () => vault.status());
@@ -128,18 +135,80 @@ function registerIpc() {
   });
   handle('vault:changePassword', (oldPw, newPw) => vault.changeMasterPassword(oldPw, newPw));
   handle('vault:importSshConfig', () => vault.importSshConfig());
+  handle('vault:settings', () => vault.getSettings());
+  handle('vault:saveSettings', (settings) => vault.saveSettings(settings));
+  handle('vault:exportBackup', async (password, options) => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Xuất backup SSH Manager đã mã hoá',
+      defaultPath: 'ssh-manager-backup.sshman',
+      filters: [{ name: 'SSH Manager encrypted backup', extensions: ['sshman'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    const serialized = await vault.createEncryptedBackup(password, options || {});
+    const tmp = result.filePath + '.tmp';
+    fs.writeFileSync(tmp, serialized, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmp, result.filePath);
+    return { canceled: false, path: result.filePath };
+  });
+  handle('vault:importBackup', async (password) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Nhập backup SSH Manager đã mã hoá',
+      filters: [{ name: 'SSH Manager encrypted backup', extensions: ['sshman'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true };
+    const stat = fs.statSync(result.filePaths[0]);
+    if (stat.size > 20 * 1024 * 1024) throw new Error('File backup vượt quá giới hạn 20 MB');
+    const imported = await vault.importEncryptedBackup(
+      fs.readFileSync(result.filePaths[0], 'utf8'),
+      password
+    );
+    return { canceled: false, ...imported };
+  });
 
   handle('conn:list', () => vault.listConnections());
   handle('conn:save', (conn) => vault.saveConnection(conn));
   handle('conn:delete', (id) => vault.deleteConnection(id));
+  handle('conn:duplicate', (id) => vault.duplicateConnection(id));
 
   handle('snip:list', () => vault.listSnippets());
   handle('snip:save', (snippet) => vault.saveSnippet(snippet));
   handle('snip:delete', (id) => vault.deleteSnippet(id));
 
-  handle('ssh:open', (sessionId, connectionId, size) => {
+  handle('ssh:open', async (sessionId, connectionId, size) => {
+    validateId(sessionId, 'Session ID');
+    validateId(connectionId, 'Connection ID');
     const conn = vault.getConnectionFull(connectionId);
     if (!conn) throw new Error('Không tìm thấy kết nối');
+
+    if (conn.environment === 'production') {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'Xác nhận kết nối Production',
+        message: 'Bạn sắp kết nối tới môi trường Production',
+        detail: conn.name + '\n' + conn.username + '@' + conn.host + ':' + conn.port,
+        buttons: ['Huỷ kết nối', 'Tiếp tục'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (response !== 1) throw new Error('Đã huỷ kết nối Production');
+    }
+
+    if (conn.onConnect && conn.onConnect.trim()) {
+      const inspected = inspectCommand(conn.onConnect);
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: inspected.dangerous ? 'warning' : 'question',
+        title: inspected.dangerous ? 'Lệnh có rủi ro cao' : 'Xác nhận lệnh khi kết nối',
+        message: 'Lệnh sau sẽ được gửi sau khi SSH kết nối thành công:',
+        detail: inspected.command,
+        buttons: ['Huỷ kết nối', 'Kết nối và chạy lệnh'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (response !== 1) throw new Error('Đã huỷ lệnh tự động');
+    }
 
     const send = (channel, payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -151,7 +220,7 @@ function registerIpc() {
     ssh.connect(
       sessionId,
       { ...conn },
-      size || {},
+      clampTerminalSize(size),
       {
         onData: (data) => send('ssh:data', data),
         onStatus: (status) => send('ssh:status', status),
@@ -167,13 +236,37 @@ function registerIpc() {
     return true;
   });
 
-  ipcMain.on('ssh:input', (_event, sessionId, data) => ssh.write(sessionId, data));
-  ipcMain.on('ssh:resize', (_event, sessionId, cols, rows) => ssh.resize(sessionId, cols, rows));
+  ipcMain.on('ssh:input', (event, sessionId, data) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    try {
+      validateId(sessionId, 'Session ID');
+      if (typeof data !== 'string' || data.length > 1024 * 1024) return;
+      ssh.write(sessionId, data);
+    } catch {
+      // Bỏ qua IPC không hợp lệ; không phản chiếu dữ liệu nhạy cảm về renderer.
+    }
+  });
+  ipcMain.on('ssh:resize', (event, sessionId, cols, rows) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    try {
+      validateId(sessionId, 'Session ID');
+      const size = clampTerminalSize({ cols, rows });
+      ssh.resize(sessionId, size.cols, size.rows);
+    } catch {
+      // Bỏ qua IPC không hợp lệ.
+    }
+  });
+
+  handle('knownHosts:list', () => ssh.knownHosts.list());
+  handle('knownHosts:forget', (host) => {
+    ssh.knownHosts.forget(String(host));
+    return true;
+  });
 
   handle('dialog:pickPrivateKey', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Chọn private key',
-      defaultPath: path.join(app.getPath('home'), '.ssh'),
+      defaultPath: currentPlatform.sshDirectory(),
       properties: ['openFile', 'showHiddenFiles'],
     });
     return result.canceled ? null : result.filePaths[0];
@@ -249,7 +342,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => {
     if (ssh) ssh.disconnectAll();
     if (vault) vault.lock();
-    if (process.platform !== 'darwin') app.quit();
+    if (currentPlatform.shouldQuitOnWindowClose()) app.quit();
   });
 
   app.on('before-quit', () => {

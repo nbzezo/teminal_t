@@ -1,7 +1,8 @@
 # SSH Manager
 
 Ứng dụng desktop (Electron) để lưu, truy cập nhanh và thao tác lệnh trên các máy chủ SSH.
-Giao diện dựng theo hệ thiết kế Yaru / libadwaita của Ubuntu 26.04.
+Giao diện lấy cảm hứng từ Yaru/libadwaita và hỗ trợ Windows 10/11 cùng Ubuntu Desktop
+22.04/24.04 LTS. Xem [hướng dẫn và GAP Analysis đa nền tảng](docs/CROSS_PLATFORM.md).
 
 ## Chạy
 
@@ -26,10 +27,15 @@ không có cách khôi phục.**
 | Lệnh dùng nhiều | Lưu vào thanh **Lệnh nhanh** dưới đáy, bấm một phát là gửi vào phiên đang mở |
 | Lệnh chạy tự động | Điền ô *Lệnh chạy ngay khi kết nối* trong form máy chủ |
 | Lấy sẵn host có rồi | Nút **Nhập config** đọc `~/.ssh/config` |
+| Phân loại môi trường | Chọn Development/Staging/Production; Production luôn cảnh báo trước khi kết nối |
+| Sao chép cấu hình | Mở form sửa rồi chọn **Sao chép**; credential vẫn nằm trong vault mã hoá |
 | Sao chép trong terminal | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> (như GNOME Terminal — <kbd>Ctrl</kbd>+<kbd>C</kbd> vẫn là tín hiệu ngắt) |
 | Dán vào terminal | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> |
+| Tìm trong terminal | <kbd>Ctrl</kbd>+<kbd>F</kbd> |
 | Khoá kho | <kbd>Ctrl</kbd>+<kbd>L</kbd> — ngắt hết phiên và xoá khoá khỏi RAM |
 | Đổi master password | Nút ⚙ trên thanh tiêu đề |
+| Backup/khôi phục | ⚙ → **Backup mã hoá**; credential không được xuất mặc định |
+| Quản lý host key | ⚙ → **Host key đã tin cậy** để xem fingerprint hoặc quên một mục |
 
 Máy chủ được xếp theo nhóm, trong mỗi nhóm ưu tiên máy vừa dùng gần nhất.
 
@@ -78,15 +84,31 @@ Khi sửa một máy chủ, để trống ô mật khẩu/passphrase nghĩa là 
 
 ## Bảo mật
 
-- Kho nằm ở `%APPDATA%/sshman/vault.enc` (xem đường dẫn chính xác trong ⚙ → Thông tin).
+- Kho nằm trong thư mục `userData` chuẩn của Electron (`%APPDATA%` trên Windows,
+  `~/.config` trên Ubuntu; xem đường dẫn chính xác trong ⚙ → Thông tin).
 - Mã hoá **AES-256-GCM**, khoá dẫn xuất bằng **scrypt** (N=32768, r=8, p=1). GCM phát
   hiện nếu file bị sửa. Ghi file theo kiểu ghi-tạm-rồi-đổi-tên để không hỏng kho khi mất điện.
-- Khoá giải mã chỉ tồn tại trong RAM của main process. **Mật khẩu không bao giờ đi qua
-  IPC sang giao diện** — renderer chỉ gửi id kết nối, main process tự tra bí mật và dùng.
-- Renderer chạy với `contextIsolation: true`, `nodeIntegration: false` và một CSP chặt.
+- Khoá giải mã chỉ tồn tại trong RAM của main process. Credential đã lưu không bao giờ được
+  trả về renderer — renderer chỉ gửi id kết nối, main process tự tra bí mật và dùng. Master
+  password nhập ở màn hình khoá đi qua kênh IPC cô lập đúng một chiều để dẫn xuất khoá; nó
+  không được ghi file, log hoặc trả lại giao diện.
+- Renderer chạy với `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false` và
+  một CSP chặt. Main process kiểm tra nguồn gửi của mọi IPC và giới hạn kích thước đầu vào.
 - Host key kiểm theo mô hình TOFU: lần đầu hỏi bạn xác nhận vân tay SHA256, các lần sau
   phải khớp. Vân tay đổi thì hiện cảnh báo đỏ và chặn cho tới khi bạn xác nhận lại.
   Danh sách lưu ở `known_hosts.json` cạnh kho.
+- Host, port, username, ID và kích thước terminal được kiểm tra ở main process. Lỗi được che
+  secret và không trả stack trace. Lệnh tự động/snippet auto-run luôn hiện nguyên lệnh để xác
+  nhận; các mẫu nguy hiểm có cảnh báo riêng.
+- Kho tự khoá sau 15 phút không hoạt động theo mặc định (cấu hình 1–240 phút trong ⚙), đồng
+  thời ngắt toàn bộ phiên và xoá khoá khỏi RAM.
+
+### Backup
+
+Backup dùng một mật khẩu riêng tối thiểu 12 ký tự, scrypt và AES-256-GCM. File có version
+schema, được xác thực trước khi nhập và bỏ qua endpoint/snippet trùng thay vì ghi đè. Password
+và passphrase không nằm trong backup mặc định; chỉ được đưa vào khi người dùng chủ động bật
+**Bao gồm credential**. Ứng dụng chỉ lưu đường dẫn private key, không nhúng nội dung file key.
 
 Một điểm đánh đổi cần biết: khi kho đang mở, mật khẩu đã lưu nằm dưới dạng rõ trong bộ
 nhớ tiến trình. Ai có quyền admin trên máy bạn đều đọc được. Khoá kho khi rời máy.
@@ -97,14 +119,16 @@ nhớ tiến trình. Ai có quyền admin trên máy bạn đều đọc đượ
 npm test
 ```
 
-121 phép kiểm tra, chia bảy tầng:
+Các phép kiểm tra được chia theo các tầng sau:
 
 | Lệnh | Kiểm cái gì |
 |---|---|
+| `npm run test:platform` | Adapter Windows/Linux: home path, Unicode, separator và SSH agent |
 | `npm run test:vault` | Mã hoá, đọc/ghi kho, đổi master password, chống rò bí mật ra đĩa |
+| `npm run test:security` | Validation, che lỗi, phát hiện lệnh nguy hiểm, migration và backup mã hoá |
 | `npm run test:import` | Bộ đọc `~/.ssh/config`: wildcard, thiếu trường, nhập trùng |
 | `npm run test:utf8` | Tiếng Việt qua đường SSH, kể cả khi gói tin bị cắt từng byte một |
-| `npm run test:ssh` | Dựng SSH server thật trên `127.0.0.1` rồi kết nối vào: auth bằng mật khẩu và bằng key, cấp pty, gõ lệnh, đổi kích thước, cảnh báo host key đổi |
+| `npm run test:ssh` | Dựng SSH server thật trên `127.0.0.1`: password, key thường/key có passphrase, PTY, resize và host key đổi |
 | `npm run test:ui` | Chạy Electron thật, điều khiển giao diện: tạo kho, thêm máy chủ, tìm kiếm, bảng Ctrl+K, lệnh nhanh, khoá/mở lại |
 | `npm run test:ime` | Bộ gõ tiếng Việt: phím trong lúc soạn thảo, tìm không dấu, dữ liệu sống sót qua vòng khoá/mở |
 | `npm run test:theme` | Khoá các giá trị Ubuntu: accent cam, bảng Tango, nền tím cà, chữ Ubuntu Sans có glyph tiếng Việt, số đo libadwaita — chạy cả chế độ sáng lẫn tối |
@@ -114,10 +138,11 @@ Test dùng thư mục dữ liệu tạm, không đụng tới kho thật của b
 ## Đóng gói
 
 ```bash
-npm run build
+npm run build:win    # NSIS + portable, chạy trên Windows
+npm run build:linux  # AppImage + deb, chạy trên Ubuntu
 ```
 
-Cần cài thêm `electron-builder` (`npm i -D electron-builder`). Kết quả nằm trong `dist/`.
+`electron-builder` đã được khai báo trong devDependencies. Kết quả nằm trong `dist/`.
 
 ## Cấu trúc
 
@@ -126,6 +151,7 @@ src/main/
   main.js         cửa sổ, menu, IPC, hộp thoại xác nhận host key
   vault.js        kho kết nối và lệnh nhanh, nhập từ ~/.ssh/config
   crypto.js       scrypt + AES-256-GCM
+  validation.js   validation đầu vào, che lỗi và nhận diện lệnh nguy hiểm
   ssh-manager.js  phiên ssh2, known_hosts, ssh-agent
   preload.js      cầu nối duy nhất giữa renderer và main
 src/renderer/

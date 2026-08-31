@@ -15,12 +15,18 @@ const api = {
     lock: () => ipcRenderer.invoke('vault:lock'),
     changePassword: (oldPw, newPw) => ipcRenderer.invoke('vault:changePassword', oldPw, newPw),
     importSshConfig: () => ipcRenderer.invoke('vault:importSshConfig'),
+    settings: () => ipcRenderer.invoke('vault:settings'),
+    saveSettings: (settings) => ipcRenderer.invoke('vault:saveSettings', settings),
+    exportBackup: (password, options) =>
+      ipcRenderer.invoke('vault:exportBackup', password, options),
+    importBackup: (password) => ipcRenderer.invoke('vault:importBackup', password),
   },
 
   connections: {
     list: () => ipcRenderer.invoke('conn:list'),
     save: (conn) => ipcRenderer.invoke('conn:save', conn),
     remove: (id) => ipcRenderer.invoke('conn:delete', id),
+    duplicate: (id) => ipcRenderer.invoke('conn:duplicate', id),
   },
 
   snippets: {
@@ -51,6 +57,11 @@ const api = {
   dialogs: {
     pickPrivateKey: () => ipcRenderer.invoke('dialog:pickPrivateKey'),
     confirm: (message, detail) => ipcRenderer.invoke('dialog:confirm', message, detail),
+  },
+
+  knownHosts: {
+    list: () => ipcRenderer.invoke('knownHosts:list'),
+    forget: (host) => ipcRenderer.invoke('knownHosts:forget', host),
   },
 
   // Cửa sổ không khung: trang tự vẽ nút thu nhỏ / phóng to / đóng

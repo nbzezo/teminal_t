@@ -1,19 +1,23 @@
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { StringDecoder } = require('string_decoder');
 const { Client } = require('ssh2');
-
-const WINDOWS_AGENT_PIPE = '\\\\.\\pipe\\openssh-ssh-agent';
+const { currentPlatform } = require('./platform');
+const {
+  validateHost,
+  validatePort,
+  validateUsername,
+  validateId,
+  clampTerminalSize,
+  safeErrorMessage,
+} = require('./validation');
 
 /** Đường ống tới ssh-agent của hệ điều hành, nếu có. */
 function detectAgent() {
-  if (process.env.SSH_AUTH_SOCK) return process.env.SSH_AUTH_SOCK;
-  if (process.platform === 'win32' && fs.existsSync(WINDOWS_AGENT_PIPE)) return WINDOWS_AGENT_PIPE;
-  return null;
+  return currentPlatform.detectSshAgent();
 }
 
 function fingerprint(keyBuffer) {
@@ -30,7 +34,14 @@ class KnownHosts {
     this.filePath = filePath;
     this.map = {};
     try {
-      this.map = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid');
+      this.map = Object.fromEntries(
+        Object.entries(parsed).filter(
+          ([key, value]) =>
+            typeof key === 'string' && key.length <= 320 && /^SHA256:[A-Za-z0-9+/]{20,}$/.test(value)
+        )
+      );
     } catch {
       this.map = {};
     }
@@ -41,14 +52,27 @@ class KnownHosts {
   }
 
   set(hostKey, fp) {
+    if (typeof hostKey !== 'string' || hostKey.length > 320) throw new Error('Host key ID không hợp lệ');
+    if (!/^SHA256:[A-Za-z0-9+/]{20,}$/.test(fp)) throw new Error('Fingerprint không hợp lệ');
     this.map[hostKey] = fp;
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(this.map, null, 2), { mode: 0o600 });
+    const tmp = this.filePath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(this.map, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, this.filePath);
   }
 
   forget(hostKey) {
     delete this.map[hostKey];
-    fs.writeFileSync(this.filePath, JSON.stringify(this.map, null, 2), { mode: 0o600 });
+    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    const tmp = this.filePath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(this.map, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, this.filePath);
+  }
+
+  list() {
+    return Object.entries(this.map)
+      .map(([host, fp]) => ({ host, fingerprint: fp }))
+      .sort((a, b) => a.host.localeCompare(b.host));
   }
 }
 
@@ -80,6 +104,8 @@ class SshManager {
    * @param {{onData: Function, onStatus: Function, onClose: Function}} handlers
    */
   connect(sessionId, conn, size, handlers) {
+    sessionId = validateId(sessionId, 'Session ID');
+    size = clampTerminalSize(size);
     if (this.sessions.has(sessionId)) throw new Error('Phiên đã tồn tại');
 
     const { onData, onStatus, onClose } = handlers;
@@ -88,7 +114,7 @@ class SshManager {
     this.sessions.set(sessionId, entry);
 
     const fail = (message) => {
-      onStatus({ state: 'error', message });
+      onStatus({ state: 'error', message: safeErrorMessage({ message }) });
       this._cleanup(sessionId);
       onClose();
     };
@@ -120,7 +146,7 @@ class SshManager {
       );
     });
 
-    client.on('error', (err) => fail(err.message));
+    client.on('error', (err) => fail(safeErrorMessage(err)));
     client.on('end', () => onStatus({ state: 'ended', message: 'Máy chủ đã ngắt kết nối' }));
 
     // Máy chủ yêu cầu nhập tương tác (thường là mật khẩu hoặc OTP)
@@ -146,14 +172,21 @@ class SshManager {
   }
 
   _buildConfig(conn, size) {
-    const hostKeyId = conn.host + ':' + conn.port;
+    const host = validateHost(conn.host);
+    const port = validatePort(conn.port);
+    const username = validateUsername(conn.username);
+    const hostKeyId = host + ':' + port;
 
     const config = {
-      host: conn.host,
-      port: conn.port,
-      username: conn.username,
-      readyTimeout: 20000,
-      keepaliveInterval: 20000,
+      host,
+      port,
+      username,
+      readyTimeout: Number.isFinite(Number(conn.connectTimeout))
+        ? Math.min(120000, Math.max(1000, Number(conn.connectTimeout)))
+        : 20000,
+      keepaliveInterval: Number.isFinite(Number(conn.keepaliveInterval))
+        ? Math.min(120000, Math.max(0, Number(conn.keepaliveInterval)))
+        : 20000,
       keepaliveCountMax: 3,
       tryKeyboard: true,
       hostVerifier: (keyBuffer, callback) => {
@@ -182,8 +215,12 @@ class SshManager {
     }
 
     if (conn.privateKeyPath) {
-      const keyPath = conn.privateKeyPath.replace(/^~/, os.homedir());
+      const keyPath = currentPlatform.expandLocalPath(conn.privateKeyPath);
       if (!fs.existsSync(keyPath)) throw new Error('Không tìm thấy private key: ' + keyPath);
+      const keyStat = fs.statSync(keyPath);
+      if (!keyStat.isFile() || keyStat.size > 1024 * 1024) {
+        throw new Error('Private key phải là file nhỏ hơn hoặc bằng 1 MB');
+      }
       config.privateKey = fs.readFileSync(keyPath);
       if (conn.passphrase) config.passphrase = conn.passphrase;
       return config;

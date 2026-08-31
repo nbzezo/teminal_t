@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.builder-cache/
 *.log
 
 # Kho ket noi nam trong userData cua he dieu hanh, khong bao gio trong repo,

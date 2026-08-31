@@ -54,12 +54,14 @@ function ok(label) {
     password: 'super-secret',
     group: 'Production',
     onConnect: 'cd /var/www',
+    keepaliveInterval: 0,
   });
   assert.strictEqual(saved.password, undefined);
   assert.strictEqual(saved.hasPassword, true);
   ok('bản ghi trả về renderer không kèm mật khẩu');
 
   assert.strictEqual(vault.getConnectionFull(saved.id).password, 'super-secret');
+  assert.strictEqual(vault.getConnectionFull(saved.id).keepaliveInterval, 0);
   ok('main process vẫn đọc được mật khẩu đầy đủ');
 
   assert.throws(() => vault.saveConnection({ host: 'x' }), /Thiếu username/);
@@ -84,12 +86,17 @@ function ok(label) {
   // --- snippets ---
   vault.saveSnippet({ name: 'Xem log', command: 'tail -f /var/log/syslog' });
   assert.strictEqual(vault.listSnippets().length, 1);
-  assert.strictEqual(vault.listSnippets()[0].autoRun, true);
-  ok('lưu được lệnh nhanh, mặc định autoRun bật');
+  assert.strictEqual(vault.listSnippets()[0].autoRun, false);
+  ok('lưu được lệnh nhanh, mặc định an toàn không tự chạy');
 
   vault.touchConnection(saved.id);
   assert.strictEqual(vault.getConnectionFull(saved.id).useCount, 1);
   ok('touchConnection tăng bộ đếm lần dùng');
+
+  vault.saveSettings({ autoLockMinutes: 30 });
+  assert.strictEqual(vault.getSettings().autoLockMinutes, 30);
+  assert.throws(() => vault.saveSettings({ autoLockMinutes: 0 }), /1 đến 240/);
+  ok('cấu hình tự khoá được validate và lưu trong vault');
 
   // --- khoá / mở lại từ đĩa ---
   vault.lock();
@@ -122,6 +129,16 @@ function ok(label) {
   await final.unlock('master-password-2');
   assert.strictEqual(final.getConnectionFull(saved.id).password, 'super-secret');
   ok('đổi master password xong mở bằng mật khẩu mới, dữ liệu nguyên vẹn');
+
+  assert.strictEqual(final.getSettings().autoLockMinutes, 30);
+  ok('migration/schema giữ nguyên cấu hình tự khoá sau khi mở lại');
+
+  const duplicate = final.duplicateConnection(saved.id);
+  assert.notStrictEqual(duplicate.id, saved.id);
+  assert.ok(duplicate.name.includes('bản sao'));
+  assert.strictEqual(final.getConnectionFull(duplicate.id).password, 'super-secret');
+  final.deleteConnection(duplicate.id);
+  ok('sao chép kết nối giữ credential trong vault nhưng dùng ID mới');
 
   // --- xoá ---
   final.deleteConnection(saved.id);

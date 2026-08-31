@@ -2,12 +2,67 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 const { makeSalt, deriveKey, encrypt, decrypt, wipe, SCRYPT_PARAMS } = require('./crypto');
+const { currentPlatform } = require('./platform');
+const {
+  cleanString,
+  validateHost,
+  validatePort,
+  validateUsername,
+  normalizeEnvironment,
+  inspectCommand,
+} = require('./validation');
 
 const VAULT_VERSION = 1;
-const EMPTY = { connections: [], snippets: [] };
+const PAYLOAD_SCHEMA_VERSION = 2;
+const BACKUP_VERSION = 1;
+
+function emptyVault() {
+  return {
+    schemaVersion: PAYLOAD_SCHEMA_VERSION,
+    connections: [],
+    snippets: [],
+    settings: { autoLockMinutes: 15 },
+  };
+}
+
+function normalizeSecret(value, field) {
+  if (value == null || value === '') return undefined;
+  const secret = String(value);
+  if (secret.length > 4096) throw new Error(field + ' vượt quá giới hạn cho phép');
+  return secret;
+}
+
+function boundedNumber(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+function migratePayload(payload) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const migrated = {
+    schemaVersion: PAYLOAD_SCHEMA_VERSION,
+    connections: Array.isArray(source.connections) ? source.connections : [],
+    snippets: Array.isArray(source.snippets) ? source.snippets : [],
+    settings: {
+      autoLockMinutes: Number.isInteger(source.settings && source.settings.autoLockMinutes)
+        ? Math.min(240, Math.max(1, source.settings.autoLockMinutes))
+        : 15,
+    },
+  };
+
+  migrated.connections = migrated.connections.map((conn) => ({
+    ...conn,
+    environment: normalizeEnvironment(conn.environment),
+    tags: Array.isArray(conn.tags) ? conn.tags.filter((tag) => typeof tag === 'string').slice(0, 20) : [],
+    color: typeof conn.color === 'string' ? conn.color : '',
+    defaultDirectory: typeof conn.defaultDirectory === 'string' ? conn.defaultDirectory : '',
+    connectTimeout: boundedNumber(conn.connectTimeout, 20000, 1000, 120000),
+    keepaliveInterval: boundedNumber(conn.keepaliveInterval, 20000, 0, 120000),
+  }));
+  return migrated;
+}
 
 /**
  * Kho lưu trữ cấu hình SSH. Toàn bộ nội dung (kể cả tên host) được mã hoá
@@ -42,7 +97,7 @@ class Vault {
     const salt = makeSalt();
     this.key = await deriveKey(masterPassword, salt);
     this.salt = salt;
-    this.data = structuredClone(EMPTY);
+    this.data = emptyVault();
     this._persist();
     return this.status();
   }
@@ -62,7 +117,8 @@ class Vault {
     }
     this.key = key;
     this.salt = salt;
-    this.data = { connections: payload.connections || [], snippets: payload.snippets || [] };
+    this.data = migratePayload(payload);
+    if (payload.schemaVersion !== PAYLOAD_SCHEMA_VERSION) this._persist();
     return this.status();
   }
 
@@ -116,27 +172,39 @@ class Vault {
 
     const conn = {
       id: input.id || crypto.randomUUID(),
-      name: (input.name || '').trim() || (input.host || '').trim(),
-      host: (input.host || '').trim(),
-      port: Number(input.port) || 22,
-      username: (input.username || '').trim(),
+      name: cleanString(input.name, 'Tên hiển thị', 120) || validateHost(input.host),
+      host: validateHost(input.host),
+      port: validatePort(input.port == null || input.port === '' ? 22 : input.port),
+      username: validateUsername(input.username),
       authType: input.authType === 'password' ? 'password' : 'key',
-      privateKeyPath: (input.privateKeyPath || '').trim(),
-      group: (input.group || '').trim(),
-      notes: input.notes || '',
-      onConnect: input.onConnect || '',
+      privateKeyPath: cleanString(input.privateKeyPath, 'Đường dẫn private key', 2048),
+      group: cleanString(input.group, 'Nhóm', 80),
+      tags: Array.isArray(input.tags)
+        ? input.tags.map((tag) => cleanString(tag, 'Tag', 40)).filter(Boolean).slice(0, 20)
+        : cleanString(input.tags, 'Tag', 500)
+            .split(',')
+            .map((tag) => tag.trim())
+            .filter(Boolean)
+            .slice(0, 20),
+      color: /^#[0-9a-f]{6}$/i.test(String(input.color || '')) ? input.color : '',
+      environment: normalizeEnvironment(input.environment),
+      defaultDirectory: cleanString(input.defaultDirectory, 'Thư mục mặc định', 1024),
+      notes: cleanString(input.notes, 'Ghi chú', 4000, { trim: false }),
+      onConnect: input.onConnect
+        ? inspectCommand(input.onConnect).command
+        : '',
+      connectTimeout: boundedNumber(input.connectTimeout, 20000, 1000, 120000),
+      keepaliveInterval: boundedNumber(input.keepaliveInterval, 20000, 0, 120000),
       favorite: Boolean(input.favorite),
       createdAt: prev.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       lastUsedAt: prev.lastUsedAt || null,
       useCount: prev.useCount || 0,
     };
-    if (!conn.host) throw new Error('Thiếu host');
-    if (!conn.username) throw new Error('Thiếu username');
-
     // Chuỗi rỗng = giữ nguyên bí mật cũ; giá trị mới = ghi đè
-    conn.password = input.password === '' ? prev.password : input.password || undefined;
-    conn.passphrase = input.passphrase === '' ? prev.passphrase : input.passphrase || undefined;
+    conn.password = input.password === '' ? prev.password : normalizeSecret(input.password, 'Mật khẩu');
+    conn.passphrase =
+      input.passphrase === '' ? prev.passphrase : normalizeSecret(input.passphrase, 'Passphrase');
     if (conn.authType === 'password') delete conn.passphrase;
     else delete conn.password;
 
@@ -150,6 +218,24 @@ class Vault {
     this._assertUnlocked();
     this.data.connections = this.data.connections.filter((c) => c.id !== id);
     this._persist();
+  }
+
+  duplicateConnection(id) {
+    this._assertUnlocked();
+    const source = this.data.connections.find((conn) => conn.id === id);
+    if (!source) throw new Error('Không tìm thấy kết nối');
+    const copy = {
+      ...structuredClone(source),
+      id: crypto.randomUUID(),
+      name: cleanString(source.name + ' (bản sao)', 'Tên hiển thị', 120),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastUsedAt: null,
+      useCount: 0,
+    };
+    this.data.connections.push(copy);
+    this._persist();
+    return this._safe(copy);
   }
 
   /** Ghi nhận lần dùng để sắp xếp “truy cập nhanh” theo tần suất. */
@@ -171,11 +257,14 @@ class Vault {
     this._assertUnlocked();
     const list = this.data.snippets;
     const idx = input.id ? list.findIndex((s) => s.id === input.id) : -1;
+    const inspected = inspectCommand(input.command);
     const snippet = {
       id: input.id || crypto.randomUUID(),
-      name: (input.name || '').trim() || 'Không tên',
-      command: input.command || '',
-      autoRun: input.autoRun !== false,
+      name: cleanString(input.name, 'Tên snippet', 120) || 'Không tên',
+      command: inspected.command,
+      group: cleanString(input.group, 'Nhóm snippet', 80),
+      autoRun: input.autoRun === true,
+      dangerous: inspected.dangerous,
     };
     if (idx >= 0) list[idx] = snippet;
     else list.push(snippet);
@@ -207,13 +296,152 @@ class Vault {
     this._persist();
   }
 
+  getSettings() {
+    this._assertUnlocked();
+    return { ...this.data.settings };
+  }
+
+  saveSettings(input) {
+    this._assertUnlocked();
+    const autoLockMinutes = Number(input && input.autoLockMinutes);
+    if (!Number.isInteger(autoLockMinutes) || autoLockMinutes < 1 || autoLockMinutes > 240) {
+      throw new Error('Thời gian tự khoá phải từ 1 đến 240 phút');
+    }
+    this.data.settings.autoLockMinutes = autoLockMinutes;
+    this._persist();
+    return this.getSettings();
+  }
+
+  async createEncryptedBackup(password, { includeCredentials = false } = {}) {
+    this._assertUnlocked();
+    if (!password || password.length < 12) {
+      throw new Error('Mật khẩu backup phải từ 12 ký tự trở lên');
+    }
+    const salt = makeSalt();
+    const key = await deriveKey(password, salt);
+    const data = structuredClone(this.data);
+    if (!includeCredentials) {
+      for (const conn of data.connections) {
+        delete conn.password;
+        delete conn.passphrase;
+      }
+    }
+    const payload = {
+      format: 'sshman-backup',
+      version: BACKUP_VERSION,
+      createdAt: new Date().toISOString(),
+      schemaVersion: PAYLOAD_SCHEMA_VERSION,
+      includesCredentials: Boolean(includeCredentials),
+      data,
+    };
+    try {
+      return JSON.stringify({
+        format: 'sshman-backup-encrypted',
+        version: BACKUP_VERSION,
+        kdf: 'scrypt',
+        params: { N: SCRYPT_PARAMS.N, r: SCRYPT_PARAMS.r, p: SCRYPT_PARAMS.p },
+        salt: salt.toString('base64'),
+        blob: encrypt(key, JSON.stringify(payload)),
+      });
+    } finally {
+      wipe(key);
+    }
+  }
+
+  async importEncryptedBackup(serialized, password) {
+    this._assertUnlocked();
+    if (!password || String(password).length < 12) {
+      throw new Error('Mật khẩu backup phải từ 12 ký tự trở lên');
+    }
+    if (typeof serialized !== 'string' || serialized.length > 20 * 1024 * 1024) {
+      throw new Error('File backup không hợp lệ hoặc quá lớn');
+    }
+    let envelope;
+    try {
+      envelope = JSON.parse(serialized);
+    } catch {
+      throw new Error('File backup không phải JSON hợp lệ');
+    }
+    if (envelope.format !== 'sshman-backup-encrypted' || envelope.version !== BACKUP_VERSION) {
+      throw new Error('Phiên bản backup không được hỗ trợ');
+    }
+    const salt = Buffer.from(String(envelope.salt || ''), 'base64');
+    const key = await deriveKey(password, salt);
+    let payload;
+    try {
+      payload = JSON.parse(decrypt(key, envelope.blob));
+    } catch {
+      throw new Error('Sai mật khẩu backup hoặc file đã bị sửa');
+    } finally {
+      wipe(key);
+    }
+    if (payload.format !== 'sshman-backup' || payload.version !== BACKUP_VERSION) {
+      throw new Error('Nội dung backup không hợp lệ');
+    }
+
+    const incoming = migratePayload(payload.data);
+    const validatedConnections = incoming.connections.map((conn) => ({
+      ...conn,
+      id: crypto.randomUUID(),
+      name: cleanString(conn.name, 'Tên hiển thị', 120) || validateHost(conn.host),
+      host: validateHost(conn.host),
+      port: validatePort(conn.port),
+      username: validateUsername(conn.username),
+      authType: conn.authType === 'password' ? 'password' : 'key',
+      privateKeyPath: cleanString(conn.privateKeyPath, 'Đường dẫn private key', 2048),
+      group: cleanString(conn.group, 'Nhóm', 80),
+      tags: (conn.tags || []).map((tag) => cleanString(tag, 'Tag', 40)).filter(Boolean).slice(0, 20),
+      color: /^#[0-9a-f]{6}$/i.test(String(conn.color || '')) ? conn.color : '',
+      defaultDirectory: cleanString(conn.defaultDirectory, 'Thư mục mặc định', 1024),
+      notes: cleanString(conn.notes, 'Ghi chú', 4000, { trim: false }),
+      onConnect: conn.onConnect ? inspectCommand(conn.onConnect).command : '',
+      environment: normalizeEnvironment(conn.environment),
+      password:
+        conn.authType === 'password' ? normalizeSecret(conn.password, 'Mật khẩu') : undefined,
+      passphrase:
+        conn.authType !== 'password' ? normalizeSecret(conn.passphrase, 'Passphrase') : undefined,
+    }));
+    const existingEndpoints = new Set(
+      this.data.connections.map((conn) => `${conn.username}\u0000${conn.host}\u0000${conn.port}`)
+    );
+    let connectionsAdded = 0;
+    for (const conn of validatedConnections) {
+      const endpoint = `${conn.username}\u0000${conn.host}\u0000${conn.port}`;
+      if (existingEndpoints.has(endpoint)) continue;
+      existingEndpoints.add(endpoint);
+      this.data.connections.push({ ...conn, id: crypto.randomUUID() });
+      connectionsAdded += 1;
+    }
+
+    const snippetKeys = new Set(this.data.snippets.map((snippet) => `${snippet.name}\u0000${snippet.command}`));
+    let snippetsAdded = 0;
+    for (const item of incoming.snippets) {
+      const inspected = inspectCommand(item.command);
+      const snippet = {
+        id: crypto.randomUUID(),
+        name: cleanString(item.name, 'Tên snippet', 120) || 'Không tên',
+        command: inspected.command,
+        group: cleanString(item.group, 'Nhóm snippet', 80),
+        autoRun: item.autoRun === true,
+        dangerous: inspected.dangerous,
+      };
+      const keyName = `${snippet.name}\u0000${snippet.command}`;
+      if (snippetKeys.has(keyName)) continue;
+      snippetKeys.add(keyName);
+      this.data.snippets.push(snippet);
+      snippetsAdded += 1;
+    }
+    this._persist();
+    return { connectionsAdded, snippetsAdded, includesCredentials: Boolean(payload.includesCredentials) };
+  }
+
   /**
    * Đọc ~/.ssh/config và thêm các Host chưa có trong kho.
    * Bỏ qua các mục wildcard vì chúng là quy tắc, không phải máy cụ thể.
    */
   importSshConfig() {
     this._assertUnlocked();
-    const file = path.join(os.homedir(), '.ssh', 'config');
+    const file = currentPlatform.sshConfigPath();
     if (!fs.existsSync(file)) throw new Error('Không tìm thấy ' + file);
 
     const entries = [];
@@ -236,14 +464,14 @@ class Vault {
     for (const { alias, fields } of entries) {
       if (!alias || alias.includes('*') || alias.includes('?')) continue;
       const host = fields.hostname || alias;
-      const username = fields.user || os.userInfo().username;
+      const username = fields.user || process.env.USERNAME || process.env.USER || '';
       const port = Number(fields.port) || 22;
       const duplicate = this.data.connections.some(
         (c) => c.host === host && c.username === username && c.port === port
       );
       if (duplicate) continue;
       const keyPath = fields.identityfile
-        ? fields.identityfile.replace(/^~/, os.homedir()).replace(/^"|"$/g, '')
+        ? currentPlatform.expandLocalPath(fields.identityfile)
         : '';
       this.saveConnection({
         name: alias,
@@ -260,4 +488,4 @@ class Vault {
   }
 }
 
-module.exports = { Vault };
+module.exports = { Vault, migratePayload, PAYLOAD_SCHEMA_VERSION };

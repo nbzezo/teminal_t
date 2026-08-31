@@ -1,6 +1,6 @@
 'use strict';
 
-/* global Terminal, FitAddon */
+/* global Terminal, FitAddon, SearchAddon */
 
 const bridge = window.api;
 
@@ -52,6 +52,7 @@ const state = {
   editingSnippetId: null,
   paletteIndex: 0,
   paletteItems: [],
+  settings: { autoLockMinutes: 15 },
 };
 
 /* =========================================================================
@@ -141,6 +142,14 @@ function liveCount(connId) {
  * ========================================================================= */
 
 let lockMode = 'unlock'; // 'unlock' | 'setup'
+let autoLockTimer = null;
+
+function scheduleAutoLock() {
+  clearTimeout(autoLockTimer);
+  if ($('app').hidden) return;
+  const minutes = Number(state.settings.autoLockMinutes) || 15;
+  autoLockTimer = setTimeout(() => lockVault(), minutes * 60 * 1000);
+}
 
 async function initLockScreen() {
   const status = await call(bridge.vault.status());
@@ -183,10 +192,12 @@ $('lock-form').addEventListener('submit', async (event) => {
   $('lock-screen').hidden = true;
   $('app').hidden = false;
   await refreshAll();
+  scheduleAutoLock();
   $('search').focus();
 });
 
 async function lockVault() {
+  clearTimeout(autoLockTimer);
   for (const id of [...state.sessions.keys()]) closeSession(id, true);
   await call(bridge.vault.lock());
   state.connections = [];
@@ -210,6 +221,7 @@ async function lockVault() {
 async function refreshAll() {
   state.connections = await call(bridge.connections.list());
   state.snippets = await call(bridge.snippets.list());
+  state.settings = await call(bridge.vault.settings());
   renderConnections();
   renderSnippets();
   renderGroupOptions();
@@ -232,7 +244,9 @@ function boDau(text) {
 function matchesFilter(conn, needle) {
   if (!needle) return true;
   const hay = boDau(
-    [conn.name, conn.host, conn.username, conn.group, conn.notes].filter(Boolean).join(' ')
+    [conn.name, conn.host, conn.username, conn.group, conn.environment, ...(conn.tags || []), conn.notes]
+      .filter(Boolean)
+      .join(' ')
   );
   return hay.includes(boDau(needle));
 }
@@ -285,6 +299,8 @@ function renderConnections() {
 function connectionItem(conn) {
   const item = document.createElement('div');
   item.className = 'conn-item';
+  if (conn.environment === 'production') item.classList.add('production');
+  if (conn.color) item.style.borderLeft = '3px solid ' + conn.color;
   if (conn.id === state.selectedConnId) item.classList.add('selected');
   if (liveCount(conn.id) > 0) item.classList.add('live');
   item.title = conn.notes || conn.username + '@' + conn.host + ':' + conn.port;
@@ -301,7 +317,13 @@ function connectionItem(conn) {
   sub.className = 'conn-sub';
   const authTag = conn.authType === 'password' ? 'pw' : 'key';
   sub.textContent =
-    conn.username + '@' + conn.host + (conn.port !== 22 ? ':' + conn.port : '') + ' · ' + authTag;
+    conn.username +
+    '@' +
+    conn.host +
+    (conn.port !== 22 ? ':' + conn.port : '') +
+    ' · ' +
+    authTag +
+    (conn.environment === 'production' ? ' · PROD' : '');
   body.append(name, sub);
 
   const edit = document.createElement('button');
@@ -363,14 +385,16 @@ async function openSession(connId) {
     allowProposedApi: true,
   });
   const fit = new FitAddon.FitAddon();
+  const search = new SearchAddon.SearchAddon();
   term.loadAddon(fit);
+  term.loadAddon(search);
   term.open(pane);
   fit.fit();
 
   term.onData((data) => bridge.ssh.input(sessionId, data));
   term.onResize(({ cols, rows }) => bridge.ssh.resize(sessionId, cols, rows));
 
-  const session = { connId, name: conn.name, term, fit, pane, status: 'connecting' };
+  const session = { connId, name: conn.name, term, fit, search, pane, status: 'connecting' };
   state.sessions.set(sessionId, session);
   activateSession(sessionId);
   renderTabs();
@@ -523,11 +547,20 @@ function renderSnippets() {
   }
 }
 
-function runSnippet(snippet) {
+async function runSnippet(snippet) {
   const session = state.sessions.get(state.activeSessionId);
   if (!session) return setStatus('Chưa có phiên nào đang mở để gửi lệnh.', 'error');
   if (session.status !== 'connected') {
     return setStatus('Phiên hiện tại chưa kết nối.', 'error');
+  }
+  if (snippet.autoRun) {
+    const confirmed = await call(
+      bridge.dialogs.confirm(
+        snippet.dangerous ? 'Lệnh có rủi ro cao — vẫn chạy?' : 'Chạy lệnh nhanh này?',
+        snippet.command
+      )
+    );
+    if (!confirmed) return setStatus('Đã huỷ lệnh.', undefined);
   }
   bridge.ssh.input(state.activeSessionId, snippet.command + (snippet.autoRun ? '\n' : ''));
   session.term.focus();
@@ -545,11 +578,18 @@ function openConnectionModal(connId) {
   $('conn-modal-title').textContent = conn ? 'Sửa kết nối' : 'Kết nối mới';
   $('f-name').value = conn ? conn.name : '';
   $('f-group').value = conn ? conn.group : '';
+  $('f-environment').value = conn ? conn.environment || 'development' : 'development';
+  $('f-tags').value = conn ? (conn.tags || []).join(', ') : '';
+  $('f-color').value = conn && conn.color ? conn.color : '#e95420';
+  $('f-favorite').checked = Boolean(conn && conn.favorite);
   $('f-host').value = conn ? conn.host : '';
   $('f-port').value = conn ? conn.port : 22;
   $('f-username').value = conn ? conn.username : '';
   $('f-keypath').value = conn ? conn.privateKeyPath : '';
   $('f-onconnect').value = conn ? conn.onConnect || '' : '';
+  $('f-default-directory').value = conn ? conn.defaultDirectory || '' : '';
+  $('f-timeout').value = conn ? conn.connectTimeout || 20000 : 20000;
+  $('f-keepalive').value = conn ? conn.keepaliveInterval ?? 20000 : 20000;
   $('f-notes').value = conn ? conn.notes || '' : '';
   $('f-password').value = '';
   $('f-passphrase').value = '';
@@ -561,6 +601,7 @@ function openConnectionModal(connId) {
   syncAuthPanes();
 
   $('btn-conn-delete').hidden = !conn;
+  $('btn-conn-duplicate').hidden = !conn;
   clearError('conn-error');
   openModal('conn-modal');
   $('f-name').focus();
@@ -588,6 +629,10 @@ $('conn-form').addEventListener('submit', async (event) => {
     id: state.editingConnId,
     name: $('f-name').value,
     group: $('f-group').value,
+    environment: $('f-environment').value,
+    tags: $('f-tags').value,
+    color: $('f-color').value,
+    favorite: $('f-favorite').checked,
     host: $('f-host').value,
     port: $('f-port').value,
     username: $('f-username').value,
@@ -596,6 +641,9 @@ $('conn-form').addEventListener('submit', async (event) => {
     password: $('f-password').value,
     passphrase: $('f-passphrase').value,
     onConnect: $('f-onconnect').value,
+    defaultDirectory: $('f-default-directory').value,
+    connectTimeout: $('f-timeout').value,
+    keepaliveInterval: $('f-keepalive').value,
     notes: $('f-notes').value,
   };
   try {
@@ -621,6 +669,14 @@ $('btn-conn-delete').addEventListener('click', async () => {
   setStatus('Đã xoá kết nối.', 'ok');
 });
 
+$('btn-conn-duplicate').addEventListener('click', async () => {
+  if (!state.editingConnId) return;
+  await call(bridge.connections.duplicate(state.editingConnId));
+  closeModal('conn-modal');
+  await refreshAll();
+  setStatus('Đã tạo bản sao kết nối.', 'ok');
+});
+
 /* =========================================================================
  * Form lệnh nhanh
  * ========================================================================= */
@@ -631,7 +687,8 @@ function openSnippetModal(snippetId) {
   $('snippet-modal-title').textContent = snippet ? 'Sửa lệnh nhanh' : 'Lệnh nhanh mới';
   $('s-name').value = snippet ? snippet.name : '';
   $('s-command').value = snippet ? snippet.command : '';
-  $('s-autorun').checked = snippet ? snippet.autoRun : true;
+  $('s-group').value = snippet ? snippet.group || '' : '';
+  $('s-autorun').checked = snippet ? snippet.autoRun : false;
   $('btn-snippet-delete').hidden = !snippet;
   clearError('snippet-error');
   openModal('snippet-modal');
@@ -647,6 +704,7 @@ $('snippet-form').addEventListener('submit', async (event) => {
         id: state.editingSnippetId,
         name: $('s-name').value,
         command: $('s-command').value,
+        group: $('s-group').value,
         autoRun: $('s-autorun').checked,
       })
     );
@@ -748,13 +806,15 @@ $('palette-input').addEventListener('keydown', (event) => {
 
 async function openSettings() {
   const info = await call(bridge.app.info());
+  state.settings = await call(bridge.vault.settings());
+  $('auto-lock-minutes').value = state.settings.autoLockMinutes;
   const list = $('app-info');
   list.textContent = '';
   const rows = [
     ['Phiên bản', info.version],
     ['Vị trí kho', info.vaultPath],
     ['ssh-agent', info.agent || 'không phát hiện'],
-    ['Nền tảng', info.platform],
+    ['Nền tảng', info.platformLabel + ' (' + info.platform + ')'],
   ];
   for (const [key, value] of rows) {
     const dt = document.createElement('dt');
@@ -764,8 +824,44 @@ async function openSettings() {
     list.append(dt, dd);
   }
   clearError('password-error');
+  clearError('backup-error');
   $('password-ok').hidden = true;
+  await renderKnownHosts();
   openModal('settings-modal');
+}
+
+async function renderKnownHosts() {
+  const container = $('known-hosts-list');
+  container.textContent = '';
+  const entries = await call(bridge.knownHosts.list());
+  if (entries.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'row-note dim';
+    empty.textContent = 'Chưa có host key nào được tin cậy.';
+    container.appendChild(empty);
+    return;
+  }
+  for (const entry of entries) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const label = document.createElement('span');
+    label.className = 'row-label';
+    label.textContent = entry.host + ' — ' + entry.fingerprint;
+    const forget = document.createElement('button');
+    forget.type = 'button';
+    forget.className = 'btn btn-flat btn-sm';
+    forget.textContent = 'Quên';
+    forget.addEventListener('click', async () => {
+      const confirmed = await call(
+        bridge.dialogs.confirm('Quên host key đã tin cậy?', entry.host + '\n' + entry.fingerprint)
+      );
+      if (!confirmed) return;
+      await call(bridge.knownHosts.forget(entry.host));
+      await renderKnownHosts();
+    });
+    row.append(label, forget);
+    container.appendChild(row);
+  }
 }
 
 $('password-form').addEventListener('submit', async (event) => {
@@ -780,6 +876,55 @@ $('password-form').addEventListener('submit', async (event) => {
   $('p-old').value = '';
   $('p-new').value = '';
   $('password-ok').hidden = false;
+});
+
+$('security-settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    state.settings = await call(
+      bridge.vault.saveSettings({ autoLockMinutes: Number($('auto-lock-minutes').value) })
+    );
+    scheduleAutoLock();
+    setStatus('Đã lưu thời gian tự khoá.', 'ok');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+});
+
+$('backup-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearError('backup-error');
+  try {
+    const result = await call(
+      bridge.vault.exportBackup($('backup-password').value, {
+        includeCredentials: $('backup-credentials').checked,
+      })
+    );
+    if (!result.canceled) setStatus('Đã xuất backup mã hoá.', 'ok');
+  } catch (err) {
+    showError('backup-error', err.message);
+  } finally {
+    $('backup-password').value = '';
+  }
+});
+
+$('btn-import-backup').addEventListener('click', async () => {
+  clearError('backup-error');
+  const password = $('backup-password').value;
+  try {
+    const result = await call(bridge.vault.importBackup(password));
+    if (!result.canceled) {
+      await refreshAll();
+      setStatus(
+        'Đã nhập ' + result.connectionsAdded + ' máy chủ và ' + result.snippetsAdded + ' snippet.',
+        'ok'
+      );
+    }
+  } catch (err) {
+    showError('backup-error', err.message);
+  } finally {
+    $('backup-password').value = '';
+  }
 });
 
 /* =========================================================================
@@ -859,6 +1004,17 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  if (ctrl && event.key.toLowerCase() === 'f') {
+    event.preventDefault();
+    const session = state.sessions.get(state.activeSessionId);
+    if (session) {
+      const query = window.prompt('Tìm trong terminal');
+      if (query) session.search.findNext(query, { caseSensitive: false });
+      session.term.focus();
+    }
+    return;
+  }
+
   if (ctrl && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     openPalette();
@@ -890,5 +1046,9 @@ window.addEventListener('resize', () => {
     if (session) session.fit.fit();
   }, 80);
 });
+
+for (const eventName of ['pointerdown', 'keydown', 'wheel']) {
+  document.addEventListener(eventName, scheduleAutoLock, { passive: true });
+}
 
 initLockScreen().catch((err) => showError('lock-error', err.message));

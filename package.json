@@ -7,8 +7,12 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "build": "electron-builder",
-    "test": "node test/vault.test.js && node test/import.test.js && node test/utf8.test.js && node test/ssh.test.js && electron test/ui.test.js && electron test/ime.test.js && npm run test:theme",
+    "build:win": "electron-builder --win nsis portable",
+    "build:linux": "electron-builder --linux AppImage deb",
+    "test": "node test/platform.test.js && node test/security.test.js && node test/vault.test.js && node test/backup.test.js && node test/import.test.js && node test/utf8.test.js && node test/ssh.test.js && electron test/ui.test.js && electron test/ime.test.js && npm run test:theme",
+    "test:platform": "node test/platform.test.js",
     "test:vault": "node test/vault.test.js",
+    "test:security": "node test/security.test.js && node test/backup.test.js",
     "test:ssh": "node test/ssh.test.js",
     "test:ui": "electron test/ui.test.js",
     "test:import": "node test/import.test.js",
@@ -21,13 +25,35 @@
   "build": {
     "appId": "com.local.sshman",
     "productName": "SSH Manager",
+    "asar": true,
+    "npmRebuild": false,
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "files": [
       "src/**/*",
       "node_modules/**/*",
       "package.json"
     ],
     "win": {
-      "target": "nsis"
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-${version}-windows-${arch}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-windows-${arch}-portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Network",
+      "executableName": "ssh-manager",
+      "synopsis": "Trình quản lý kết nối SSH",
+      "description": "Lưu và mở các phiên SSH tương tác trên Windows và Ubuntu Desktop"
     }
   },
   "dependencies": {
@@ -39,6 +65,7 @@
     "ssh2": "^1.17.0"
   },
   "devDependencies": {
-    "electron": "^44.0.0"
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3"
   }
 }

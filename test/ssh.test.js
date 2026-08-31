@@ -14,9 +14,11 @@ const { SshManager, KnownHosts } = require(path.join(SRC, 'ssh-manager.js'));
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sshman-net-'));
 const hostKeyPath = path.join(tmpDir, 'host_ed25519');
 const clientKeyPath = path.join(tmpDir, 'client_ed25519');
+const protectedKeyPath = path.join(tmpDir, 'client_protected_ed25519');
 
 execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', hostKeyPath, '-N', '', '-q']);
 execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', clientKeyPath, '-N', '', '-q']);
+execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', protectedKeyPath, '-N', 'key-passphrase-123', '-q']);
 
 const PASSWORD = 'mat-khau-cua-server';
 const USERNAME = 'tester';
@@ -178,6 +180,13 @@ function connectSession(manager, id, conn, size) {
   check('đăng nhập bằng SSH key thành công', s4.statuses.some((s) => s.state === 'connected'), s4.statuses);
   check('server ghi nhận auth bằng publickey', authLog.includes('publickey'), authLog);
 
+  const protectedKey = await connectSession(manager, 's-protected-key', {
+    host: '127.0.0.1', port, username: USERNAME, authType: 'key',
+    privateKeyPath: protectedKeyPath, passphrase: 'key-passphrase-123',
+  });
+  check('đăng nhập bằng private key có passphrase thành công',
+    protectedKey.statuses.some((s) => s.state === 'connected'), protectedKey.statuses);
+
   // --- 9. Cấu hình thiếu ---
   const noKey = await connectSession(manager, 's-nokey', {
     host: '127.0.0.1', port, username: USERNAME, authType: 'password',
@@ -195,7 +204,8 @@ function connectSession(manager, id, conn, size) {
 
   // --- 10. Cảnh báo khi host key đổi ---
   const changed = new KnownHosts(path.join(tmpDir, 'kh-changed.json'));
-  changed.set('127.0.0.1:' + port, 'SHA256:vantay-cu-hoan-toan-khac-0000000000000000000');
+  const oldFingerprint = 'SHA256:' + 'A'.repeat(43);
+  changed.set('127.0.0.1:' + port, oldFingerprint);
   let sawChange = null;
   const warnManager = new SshManager(changed, async (info) => {
     sawChange = info;
@@ -205,9 +215,16 @@ function connectSession(manager, id, conn, size) {
     host: '127.0.0.1', port, username: USERNAME, authType: 'password', password: PASSWORD,
   });
   check('host key đổi thì được đánh dấu changed kèm vân tay cũ',
-    sawChange && sawChange.changed === true && sawChange.previous.startsWith('SHA256:vantay-cu'), sawChange);
+    sawChange && sawChange.changed === true && sawChange.previous === oldFingerprint, sawChange);
   check('host key đổi mà từ chối thì không kết nối',
     changedRun.statuses.some((s) => s.state === 'error'), changedRun.statuses);
+  check('danh sách host key trả về fingerprint đã lưu',
+    changed.list().some((entry) => entry.host === '127.0.0.1:' + port && entry.fingerprint === oldFingerprint),
+    changed.list());
+  changed.forget('127.0.0.1:' + port);
+  check('quên host key xoá cả trong bộ nhớ và file',
+    changed.get('127.0.0.1:' + port) === null &&
+      !JSON.parse(fs.readFileSync(path.join(tmpDir, 'kh-changed.json'), 'utf8'))['127.0.0.1:' + port]);
 
   // --- 11. Ngắt kết nối dọn sạch phiên ---
   manager.disconnect('s1');

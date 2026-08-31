@@ -1,0 +1,55 @@
+name: Cross-platform
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test on Windows
+        if: runner.os == 'Windows'
+        run: npm test
+      - name: Test on Ubuntu with a virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm test
+
+  package:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            command: npm run build:win
+            artifact: windows
+          - os: ubuntu-22.04
+            command: npm run build:linux
+            artifact: ubuntu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: ${{ matrix.command }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ssh-manager-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error

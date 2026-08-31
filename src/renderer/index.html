@@ -233,6 +233,26 @@
               <input id="f-group" type="text" placeholder="Sản xuất" list="group-options" />
               <datalist id="group-options"></datalist>
             </label>
+            <label class="row">
+              <span class="row-label">Môi trường</span>
+              <select id="f-environment">
+                <option value="development">Development</option>
+                <option value="staging">Staging</option>
+                <option value="production">Production</option>
+              </select>
+            </label>
+            <label class="row">
+              <span class="row-label">Tags</span>
+              <input id="f-tags" type="text" placeholder="web, docker, critical" />
+            </label>
+            <label class="row">
+              <span class="row-label">Màu nhận diện</span>
+              <input id="f-color" type="color" value="#e95420" />
+            </label>
+            <label class="row row-switch">
+              <span class="row-label">Yêu thích</span>
+              <input id="f-favorite" type="checkbox" class="switch" />
+            </label>
           </div>
 
           <div class="listbox">
@@ -295,8 +315,23 @@
           <h3 class="section-title">Tuỳ chọn</h3>
           <div class="listbox">
             <label class="row">
+              <span class="row-label">Thư mục làm việc mặc định</span>
+              <input id="f-default-directory" type="text" placeholder="/var/www (chỉ lưu, không tự chạy)" />
+            </label>
+            <label class="row">
               <span class="row-label">Lệnh chạy khi kết nối</span>
               <input id="f-onconnect" type="text" placeholder="cd /var/www &amp;&amp; ls -la" />
+            </label>
+            <p class="row-note dim">
+              Ứng dụng luôn hiển thị và yêu cầu xác nhận lệnh này trước mỗi lần chạy.
+            </p>
+            <label class="row">
+              <span class="row-label">Timeout kết nối (ms)</span>
+              <input id="f-timeout" type="number" min="1000" max="120000" value="20000" />
+            </label>
+            <label class="row">
+              <span class="row-label">Keep-alive (ms, 0 = tắt)</span>
+              <input id="f-keepalive" type="number" min="0" max="120000" value="20000" />
             </label>
             <label class="row row-stacked">
               <span class="row-label">Ghi chú</span>
@@ -307,6 +342,7 @@
 
         <footer class="dialog-foot">
           <button type="button" id="btn-conn-delete" class="btn btn-destructive" hidden>Xoá</button>
+          <button type="button" id="btn-conn-duplicate" class="btn btn-flat" hidden>Sao chép</button>
           <span class="spacer"></span>
           <button type="button" class="btn btn-flat" data-close="conn-modal">Huỷ</button>
           <button type="submit" class="btn btn-suggested">Lưu</button>
@@ -331,12 +367,16 @@
               <span class="row-label">Câu lệnh</span>
               <textarea id="s-command" rows="3" placeholder="tail -f /var/log/nginx/error.log" required></textarea>
             </label>
+            <label class="row">
+              <span class="row-label">Nhóm</span>
+              <input id="s-group" type="text" placeholder="Vận hành" />
+            </label>
             <label class="row row-switch">
               <span class="row-label">
                 Chạy luôn
                 <small class="dim">Tắt thì chỉ chèn vào dòng lệnh, chưa gửi</small>
               </span>
-              <input id="s-autorun" type="checkbox" class="switch" checked />
+              <input id="s-autorun" type="checkbox" class="switch" />
             </label>
           </div>
         </div>
@@ -373,6 +413,42 @@
             <button type="submit" class="btn btn-flat btn-sm">Đổi mật khẩu</button>
           </form>
 
+          <form id="security-settings-form">
+            <h3 class="section-title">Khoá tự động</h3>
+            <div class="listbox">
+              <label class="row">
+                <span class="row-label">Khoá sau khi không hoạt động (phút)</span>
+                <input id="auto-lock-minutes" type="number" min="1" max="240" value="15" />
+              </label>
+            </div>
+            <button type="submit" class="btn btn-flat btn-sm">Lưu bảo mật</button>
+          </form>
+
+          <form id="backup-form">
+            <h3 class="section-title">Backup mã hoá</h3>
+            <div id="backup-error" class="banner banner-error" hidden></div>
+            <div class="listbox">
+              <label class="row">
+                <span class="row-label">Mật khẩu backup</span>
+                <input id="backup-password" type="password" minlength="12" autocomplete="new-password" required />
+              </label>
+              <label class="row row-switch">
+                <span class="row-label">
+                  Bao gồm credential
+                  <small class="dim">Tắt theo mặc định; private key file không bao giờ được nhúng.</small>
+                </span>
+                <input id="backup-credentials" type="checkbox" class="switch" />
+              </label>
+            </div>
+            <div class="row-inline">
+              <button id="btn-export-backup" type="submit" class="btn btn-flat btn-sm">Xuất backup</button>
+              <button id="btn-import-backup" type="button" class="btn btn-flat btn-sm">Nhập backup</button>
+            </div>
+          </form>
+
+          <h3 class="section-title">Host key đã tin cậy</h3>
+          <div id="known-hosts-list" class="listbox"></div>
+
           <h3 class="section-title">Thông tin</h3>
           <dl id="app-info" class="listbox info-list"></dl>
         </div>
@@ -385,6 +461,7 @@
 
     <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="../../node_modules/@xterm/addon-search/lib/addon-search.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
