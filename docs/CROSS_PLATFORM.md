@@ -115,8 +115,18 @@ Jump Host và ba chế độ Port Forwarding đã đạt kiểm thử loopback; 
   renderer: preload, xterm, font và các ES module đều nạp đúng, không lỗi console.
 - **Windows (đợt trước):** `npm test` đạt 167/167; bản unpacked được tạo thành công tại
   `dist/win-unpacked`.
-- **Ubuntu 22.04/24.04:** đã rà source, có unit test adapter, cấu hình package và CI/Xvfb;
-  chưa chạy trên máy Ubuntu trong phiên làm việc này nên chưa tuyên bố đạt kiểm thử thực tế.
+- **Linux (đã chạy thật, v1.1.0):** toàn bộ 211 phép kiểm tra chạy trên Ubuntu thật với
+  Node 22 và Electron 44 — 121 test thuần Node cùng 90 test Electron, không lỗi nào. Hai
+  khác biệt nền tảng phát hiện được và đã xử lý:
+  - Electron không tự mang theo NSS và ALSA. Trên Ubuntu sạch, binary chết ngay với
+    `libnspr4.so: cannot open shared object file` trước khi chạy được dòng test nào.
+    Workflow CI nay cài `libnss3`, `libnspr4` và `libasound2t64`/`libasound2` trước khi test.
+  - `BrowserWindow.isMinimized()` và `isMaximized()` phản ánh trạng thái do window manager
+    quản lý. `xvfb` không chạy window manager nào nên các giá trị đó không bao giờ đúng ở
+    đó. `ui.test.js` nay khẳng định đường đi từ nút qua IPC tới `BrowserWindow` ở mọi nền
+    tảng, còn trạng thái thật chỉ khẳng định trên Windows/macOS.
+- **CI:** job Windows xanh từ trước. Hai job Ubuntu đỏ liên tục kể cả ở các commit trước
+  đợt rà soát; nguyên nhân là hai điểm ở trên chứ không phải lỗi logic đa nền tảng.
 - Build dùng JavaScript fallback đã được kiểm thử của `ssh2`; `npmRebuild: false` tránh cố
   biên dịch addon tăng tốc `cpu-features` không bắt buộc, vốn dễ lỗi khi workspace Windows có
   khoảng trắng. Cần giữ SSH integration test trong CI để bảo vệ fallback này.

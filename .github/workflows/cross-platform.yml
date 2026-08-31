@@ -18,6 +18,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Electron không tự mang theo NSS và ALSA. Trên một Ubuntu sạch nó chết
+      # ngay với "libnspr4.so: cannot open shared object file" trước khi chạy
+      # được dòng test nào. Tên gói ALSA đổi giữa 22.04 và 24.04 nên thử cả hai.
+      - name: Install Electron runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libnspr4
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2
       - name: Test on Windows
         if: runner.os == 'Windows'
         run: npm test

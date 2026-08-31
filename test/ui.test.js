@@ -430,15 +430,43 @@ app.whenReady().then(async () => {
     check('đóng tab thì quay lại trạng thái rỗng', closed.tabs === 0 && closed.emptyShown, closed);
 
     // --- 14. Điều khiển cửa sổ gọi đúng BrowserWindow ---
+    // isMaximized()/isMinimized() phản ánh trạng thái do window manager quản lý.
+    // CI chạy dưới xvfb, vốn không có window manager nào, nên ở đó cửa sổ không
+    // bao giờ báo là đã thu nhỏ. Thứ thuộc về mã của ứng dụng là đường đi từ nút
+    // trong renderer qua IPC tới BrowserWindow — cái đó khẳng định ở mọi nền tảng;
+    // còn trạng thái thật chỉ khẳng định ở nơi chắc chắn có window manager.
+    const hasWindowManager = process.platform === 'win32' || process.platform === 'darwin';
+    const windowCalls = { maximize: 0, unmaximize: 0, minimize: 0 };
+    for (const name of Object.keys(windowCalls)) {
+      const original = win[name].bind(win);
+      win[name] = (...args) => {
+        windowCalls[name] += 1;
+        return original(...args);
+      };
+    }
+
     await run(`document.getElementById('wc-max').click()`);
     await wait(300);
-    check('nút phóng to thay đổi trạng thái BrowserWindow', win.isMaximized());
+    check(
+      'nút phóng to gọi tới BrowserWindow',
+      windowCalls.maximize + windowCalls.unmaximize === 1,
+      windowCalls,
+    );
+    if (hasWindowManager) check('cửa sổ thật sự phóng to', win.isMaximized());
+
     await run(`document.getElementById('wc-max').click()`);
     await wait(300);
-    check('nút phóng to lần hai khôi phục cửa sổ', !win.isMaximized());
+    check(
+      'nút phóng to lần hai gọi tới BrowserWindow',
+      windowCalls.maximize + windowCalls.unmaximize === 2,
+      windowCalls,
+    );
+    if (hasWindowManager) check('cửa sổ khôi phục sau lần bấm thứ hai', !win.isMaximized());
+
     await run(`document.getElementById('wc-min').click()`);
     await wait(300);
-    check('nút thu nhỏ thay đổi trạng thái BrowserWindow', win.isMinimized());
+    check('nút thu nhỏ gọi BrowserWindow.minimize', windowCalls.minimize === 1, windowCalls);
+    if (hasWindowManager) check('cửa sổ thật sự thu nhỏ', win.isMinimized());
     win.restore();
     await wait(200);
     let closeRequested = false;
