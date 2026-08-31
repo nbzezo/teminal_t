@@ -397,7 +397,18 @@ async function openSession(connId) {
   term.onData((data) => bridge.ssh.input(sessionId, data));
   term.onResize(({ cols, rows }) => bridge.ssh.resize(sessionId, cols, rows));
 
-  const session = { connId, name: conn.name, term, fit, search, pane, status: 'connecting' };
+  const session = {
+    connId,
+    name: conn.name,
+    term,
+    fit,
+    search,
+    pane,
+    status: 'connecting',
+    manualClose: false,
+    reconnectAttempts: 0,
+    reconnectTimer: null,
+  };
   state.sessions.set(sessionId, session);
   activateSession(sessionId);
   renderTabs();
@@ -436,6 +447,8 @@ function activateSession(sessionId) {
 function closeSession(sessionId, silent) {
   const session = state.sessions.get(sessionId);
   if (!session) return;
+  session.manualClose = true;
+  clearTimeout(session.reconnectTimer);
   bridge.ssh.close(sessionId);
   session.term.dispose();
   session.pane.remove();
@@ -496,21 +509,52 @@ bridge.ssh.onStatus((sessionId, status) => {
 
   if (status.state === 'connected') {
     session.status = 'connected';
+    session.reconnectAttempts = 0;
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
     setStatus(status.message, 'ok');
   } else if (status.state === 'error') {
     session.status = 'gone';
     session.term.writeln('\r\n\x1b[31m✗ ' + status.message + '\x1b[0m');
     setStatus(status.message, 'error');
+    scheduleReconnect(sessionId);
   } else if (status.state === 'closed' || status.state === 'ended') {
     session.status = 'gone';
     session.term.writeln('\r\n\x1b[90m— ' + status.message + ' —\x1b[0m');
     setStatus(status.message);
+    scheduleReconnect(sessionId);
   } else if (status.state === 'connecting') {
     setStatus(status.message);
   }
   renderTabs();
   renderConnections();
 });
+
+function scheduleReconnect(sessionId) {
+  const session = state.sessions.get(sessionId);
+  const conn = session && state.connections.find((item) => item.id === session.connId);
+  if (!session || !conn || !conn.autoReconnect || session.manualClose || session.reconnectTimer) return;
+  if (session.reconnectAttempts >= 3) {
+    setStatus('Đã dừng tự kết nối lại sau 3 lần thất bại.', 'error');
+    return;
+  }
+  const delay = 1000 * 2 ** session.reconnectAttempts;
+  session.reconnectAttempts += 1;
+  session.term.writeln('\r\n\x1b[33m— Kết nối lại lần ' + session.reconnectAttempts + ' sau ' + delay / 1000 + ' giây —\x1b[0m');
+  session.reconnectTimer = setTimeout(async () => {
+    session.reconnectTimer = null;
+    if (session.manualClose || !state.sessions.has(sessionId)) return;
+    session.status = 'connecting';
+    renderTabs();
+    try {
+      await call(bridge.ssh.reconnect(sessionId, session.connId, { cols: session.term.cols, rows: session.term.rows }));
+    } catch (err) {
+      session.status = 'gone';
+      session.term.writeln('\r\n\x1b[31m✗ ' + err.message + '\x1b[0m');
+      scheduleReconnect(sessionId);
+    }
+  }, delay);
+}
 
 /* =========================================================================
  * Lệnh nhanh
@@ -594,6 +638,7 @@ function openConnectionModal(connId) {
   $('f-sftp-root').value = conn ? conn.sftpRoot || '/' : '/';
   $('f-timeout').value = conn ? conn.connectTimeout || 20000 : 20000;
   $('f-keepalive').value = conn ? conn.keepaliveInterval ?? 20000 : 20000;
+  $('f-auto-reconnect').checked = Boolean(conn && conn.autoReconnect);
   $('f-notes').value = conn ? conn.notes || '' : '';
   $('f-password').value = '';
   $('f-passphrase').value = '';
@@ -649,6 +694,7 @@ $('conn-form').addEventListener('submit', async (event) => {
     sftpRoot: $('f-sftp-root').value,
     connectTimeout: $('f-timeout').value,
     keepaliveInterval: $('f-keepalive').value,
+    autoReconnect: $('f-auto-reconnect').checked,
     notes: $('f-notes').value,
   };
   try {

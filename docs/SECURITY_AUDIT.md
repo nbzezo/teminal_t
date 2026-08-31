@@ -33,7 +33,7 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 | B | Private key, có/không passphrase | Đã hoàn chỉnh. | `_buildConfig`; test Ed25519 thường và encrypted key | P1 | Lộ key/passphrase | Không trả passphrase về renderer |
 | B | SSH Agent | Có nhưng chưa hoàn chỉnh. | Platform adapters và `platform.test.js`; chưa test agent thật | P2 | Sai khác OS/session | Test thủ công Windows/Linux agent thật |
 | B | Nhiều phiên bằng tab | Đã hoàn chỉnh. | `state.sessions`, xterm pane/tab; SSH/UI tests | P1 | Rò phiên khi khóa | `lockVault` và `disconnectAll` dọn phiên |
-| B | Tự kết nối lại | Chưa có. | Không có retry/backoff trong `SshManager` | P2 | Mất phiên/duplicate command | Thiết kế reconnect opt-in, không tự chạy lại command |
+| B | Tự kết nối lại | Đã hoàn chỉnh. | Opt-in per connection; backoff 1/2/4 giây, tối đa 3; IPC reconnect xóa `onConnect` | P2 | Replay command | Không replay lệnh; đóng tab hủy timer |
 | B | Timeout và keep-alive | Đã hoàn chỉnh. | Schema/form; clamp trong `_buildConfig` | P1 | Treo kết nối/DoS | Bổ sung UI presets sau |
 | B | Jump host/ProxyJump | Chưa có. | Không có `sock` chain/jump model | P2 | Bỏ qua verification hop | Verify host key độc lập từng hop |
 | B | Lịch sử kết nối gần đây | Có nhưng chưa hoàn chỉnh. | `lastUsedAt/useCount`, sort; chưa có màn lịch sử | P2 | Metadata nhạy cảm | Giữ trong vault; thêm view/xóa lịch sử |
@@ -122,7 +122,6 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 | SSH key manager | P1/P2 | Hiện app chỉ tham chiếu file key | Entity key metadata, fingerprint, `execFile(ssh-keygen)`, usage graph | Lớn |
 | OS credential store | P2 | Cần adapter và dependency native đa nền tảng | Credential Manager/Keychain/Secret Service; vault fallback | Lớn |
 | Jump host/ProxyJump | P2 | Host-key verification phải áp dụng riêng từng hop | Client chain qua `forwardOut`, known-host namespace theo hop | Lớn |
-| Reconnect có kiểm soát | P2 | Không được chạy lại command/Production action ngoài ý muốn | Backoff opt-in, session state machine, no auto replay | Trung bình |
 | Snippet variables/search/history | P2 | Cần UX preview và redaction | Typed placeholders, preview dialog, masked execution metadata | Trung bình |
 | Dashboard read-only | P2/P3 | Khác biệt OS và tạo tải lên host | Capability probes, timeout/cache, no remote agent | Lớn |
 | Split terminal | P3 | Tăng phức tạp focus/resize/session lifecycle | Renderer split tree, mỗi leaf một xterm/session | Lớn |

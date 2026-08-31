@@ -55,6 +55,7 @@ function ok(label) {
     group: 'Production',
     onConnect: 'cd /var/www',
     keepaliveInterval: 0,
+    autoReconnect: true,
   });
   assert.strictEqual(saved.password, undefined);
   assert.strictEqual(saved.hasPassword, true);
@@ -62,6 +63,7 @@ function ok(label) {
 
   assert.strictEqual(vault.getConnectionFull(saved.id).password, 'super-secret');
   assert.strictEqual(vault.getConnectionFull(saved.id).keepaliveInterval, 0);
+  assert.strictEqual(vault.getConnectionFull(saved.id).autoReconnect, true);
   ok('main process vẫn đọc được mật khẩu đầy đủ');
 
   assert.throws(() => vault.saveConnection({ host: 'x' }), /Thiếu username/);

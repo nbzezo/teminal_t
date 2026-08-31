@@ -40,6 +40,8 @@ const api = {
   ssh: {
     open: (sessionId, connectionId, size) =>
       ipcRenderer.invoke('ssh:open', sessionId, connectionId, size),
+    reconnect: (sessionId, connectionId, size) =>
+      ipcRenderer.invoke('ssh:reconnect', sessionId, connectionId, size),
     input: (sessionId, data) => ipcRenderer.send('ssh:input', sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.send('ssh:resize', sessionId, cols, rows),
     close: (sessionId) => ipcRenderer.invoke('ssh:close', sessionId),

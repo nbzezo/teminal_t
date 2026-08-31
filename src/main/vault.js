@@ -77,6 +77,7 @@ function migratePayload(payload) {
     defaultDirectory: typeof conn.defaultDirectory === 'string' ? conn.defaultDirectory : '',
     connectTimeout: boundedNumber(conn.connectTimeout, 20000, 1000, 120000),
     keepaliveInterval: boundedNumber(conn.keepaliveInterval, 20000, 0, 120000),
+    autoReconnect: Boolean(conn.autoReconnect),
     sftpRoot: typeof conn.sftpRoot === 'string' ? conn.sftpRoot : '/',
     tunnels: Array.isArray(conn.tunnels)
       ? conn.tunnels.slice(0, 20).map((tunnel) => {
@@ -224,6 +225,7 @@ class Vault {
         : '',
       connectTimeout: boundedNumber(input.connectTimeout, 20000, 1000, 120000),
       keepaliveInterval: boundedNumber(input.keepaliveInterval, 20000, 0, 120000),
+      autoReconnect: Boolean(input.autoReconnect),
       favorite: Boolean(input.favorite),
       createdAt: prev.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),

@@ -39,6 +39,7 @@ không có cách khôi phục.**
 | Quản lý file SFTP | Kết nối SSH rồi chọn nút **⇄**: duyệt, upload/download, tạo thư mục, đổi tên, chmod và xoá có xác nhận |
 | Local port forwarding | Kết nối SSH rồi chọn nút **↔**; tunnel chỉ bind `127.0.0.1` và tự đóng theo phiên |
 | Ghi log phiên | Chọn nút **●** trong phiên; luôn có cảnh báo dữ liệu nhạy cảm và mặc định tắt |
+| Tự kết nối lại | Bật trong cấu hình máy chủ; retry 1/2/4 giây, tối đa 3 lần và không chạy lại `onConnect` |
 
 Máy chủ được xếp theo nhóm, trong mỗi nhóm ưu tiên máy vừa dùng gần nhất.
 

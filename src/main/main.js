@@ -256,6 +256,34 @@ function registerIpc() {
     return true;
   });
 
+  handle('ssh:reconnect', (sessionId, connectionId, size) => {
+    validateId(sessionId, 'Session ID');
+    validateId(connectionId, 'Connection ID');
+    const conn = vault.getConnectionFull(connectionId);
+    if (!conn || !conn.autoReconnect) throw new Error('Kết nối lại tự động chưa được bật');
+    const send = (channel, payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, sessionId, payload);
+    };
+    ssh.connect(
+      sessionId,
+      { ...conn, onConnect: '' },
+      clampTerminalSize(size),
+      {
+        onData: (data) => {
+          send('ssh:data', data);
+          const log = sessionLogs.get(sessionId);
+          if (log) log.write(data);
+        },
+        onStatus: (status) => send('ssh:status', status),
+        onClose: () => {
+          stopSessionLog(sessionId);
+          send('ssh:status', { state: 'gone' });
+        },
+      }
+    );
+    return { sessionId, reconnect: true };
+  });
+
   ipcMain.on('ssh:input', (event, sessionId, data) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     try {
