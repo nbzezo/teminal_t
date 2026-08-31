@@ -61,7 +61,9 @@ function createWindow() {
   // Trang tự vẽ nút phóng to nên cần biết cửa sổ đang ở trạng thái nào
   const sendWindowState = () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('win:state', { maximized: mainWindow.isMaximized() });
+      mainWindow.webContents.send('win:state', {
+        maximized: mainWindow.isMaximized(),
+      });
     }
   };
   mainWindow.on('maximize', sendWindowState);
@@ -129,6 +131,22 @@ function handle(channel, fn) {
 }
 
 function registerIpc() {
+  const connectionForSsh = (connectionId, options = {}) => {
+    const conn = vault.getConnectionFull(connectionId);
+    if (!conn) throw new Error('Không tìm thấy kết nối');
+    const copy = {
+      ...conn,
+      ...(options.clearOnConnect ? { onConnect: '' } : {}),
+    };
+    if (conn.jumpHostId) {
+      if (conn.jumpHostId === conn.id) throw new Error('Một kết nối không thể tự làm jump host');
+      const jump = vault.getConnectionFull(conn.jumpHostId);
+      if (!jump) throw new Error('Jump host không còn tồn tại');
+      if (jump.jumpHostId) throw new Error('Hiện chỉ hỗ trợ một tầng jump host');
+      copy.jumpHost = { ...jump, onConnect: '', defaultDirectory: '' };
+    }
+    return copy;
+  };
   handle('app:info', () => ({
     version: app.getVersion(),
     vaultPath: vault.filePath,
@@ -170,10 +188,7 @@ function registerIpc() {
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
     const stat = fs.statSync(result.filePaths[0]);
     if (stat.size > 20 * 1024 * 1024) throw new Error('File backup vượt quá giới hạn 20 MB');
-    const imported = await vault.importEncryptedBackup(
-      fs.readFileSync(result.filePaths[0], 'utf8'),
-      password
-    );
+    const imported = await vault.importEncryptedBackup(fs.readFileSync(result.filePaths[0], 'utf8'), password);
     return { canceled: false, ...imported };
   });
 
@@ -191,8 +206,7 @@ function registerIpc() {
   handle('ssh:open', async (sessionId, connectionId, size) => {
     validateId(sessionId, 'Session ID');
     validateId(connectionId, 'Connection ID');
-    const conn = vault.getConnectionFull(connectionId);
-    if (!conn) throw new Error('Không tìm thấy kết nối');
+    const conn = connectionForSsh(connectionId);
 
     if (conn.environment === 'production') {
       const { response } = await dialog.showMessageBox(mainWindow, {
@@ -230,23 +244,18 @@ function registerIpc() {
     };
 
     // Bản sao để SshManager có thể xoá bí mật khỏi RAM mà không đụng vault
-    ssh.connect(
-      sessionId,
-      { ...conn },
-      clampTerminalSize(size),
-      {
-        onData: (data) => {
-          send('ssh:data', data);
-          const log = sessionLogs.get(sessionId);
-          if (log) log.write(data);
-        },
-        onStatus: (status) => send('ssh:status', status),
-        onClose: () => {
-          stopSessionLog(sessionId);
-          send('ssh:status', { state: 'gone' });
-        },
-      }
-    );
+    ssh.connect(sessionId, { ...conn }, clampTerminalSize(size), {
+      onData: (data) => {
+        send('ssh:data', data);
+        const log = sessionLogs.get(sessionId);
+        if (log) log.write(data);
+      },
+      onStatus: (status) => send('ssh:status', status),
+      onClose: () => {
+        stopSessionLog(sessionId);
+        send('ssh:status', { state: 'gone' });
+      },
+    });
     vault.touchConnection(connectionId);
     return { sessionId };
   });
@@ -259,28 +268,23 @@ function registerIpc() {
   handle('ssh:reconnect', (sessionId, connectionId, size) => {
     validateId(sessionId, 'Session ID');
     validateId(connectionId, 'Connection ID');
-    const conn = vault.getConnectionFull(connectionId);
+    const conn = connectionForSsh(connectionId, { clearOnConnect: true });
     if (!conn || !conn.autoReconnect) throw new Error('Kết nối lại tự động chưa được bật');
     const send = (channel, payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, sessionId, payload);
     };
-    ssh.connect(
-      sessionId,
-      { ...conn, onConnect: '' },
-      clampTerminalSize(size),
-      {
-        onData: (data) => {
-          send('ssh:data', data);
-          const log = sessionLogs.get(sessionId);
-          if (log) log.write(data);
-        },
-        onStatus: (status) => send('ssh:status', status),
-        onClose: () => {
-          stopSessionLog(sessionId);
-          send('ssh:status', { state: 'gone' });
-        },
-      }
-    );
+    ssh.connect(sessionId, conn, clampTerminalSize(size), {
+      onData: (data) => {
+        send('ssh:data', data);
+        const log = sessionLogs.get(sessionId);
+        if (log) log.write(data);
+      },
+      onStatus: (status) => send('ssh:status', status),
+      onClose: () => {
+        stopSessionLog(sessionId);
+        send('ssh:status', { state: 'gone' });
+      },
+    });
     return { sessionId, reconnect: true };
   });
 
@@ -358,7 +362,7 @@ function registerIpc() {
       localPath,
       remoteDirectory,
       (progress) => mainWindow && mainWindow.webContents.send('sftp:progress', progress),
-      overwrite
+      overwrite,
     );
     return { canceled: false, ...result };
   });
@@ -372,14 +376,14 @@ function registerIpc() {
       sessionId,
       remotePath,
       picked.filePath,
-      (progress) => mainWindow && mainWindow.webContents.send('sftp:progress', progress)
+      (progress) => mainWindow && mainWindow.webContents.send('sftp:progress', progress),
     );
     return { canceled: false, ...result };
   });
   handle('sftp:cancel', (transferId) => sftp.cancel(transferId));
 
   handle('tunnel:list', (sessionId) => ssh.listTunnels(sessionId));
-  handle('tunnel:start', (sessionId, config) => ssh.startLocalTunnel(sessionId, config));
+  handle('tunnel:start', (sessionId, config) => ssh.startTunnel(sessionId, config));
   handle('tunnel:stop', (tunnelId) => ssh.stopTunnel(tunnelId));
 
   handle('log:status', (sessionId) => sessionLogs.has(validateId(sessionId, 'Session ID')));

@@ -17,7 +17,7 @@ const {
 const { normalizeRemoteRoot } = require('./remote-path');
 
 const VAULT_VERSION = 1;
-const PAYLOAD_SCHEMA_VERSION = 3;
+const PAYLOAD_SCHEMA_VERSION = 4;
 const BACKUP_VERSION = 1;
 
 function emptyVault() {
@@ -25,7 +25,13 @@ function emptyVault() {
     schemaVersion: PAYLOAD_SCHEMA_VERSION,
     connections: [],
     snippets: [],
-    settings: { autoLockMinutes: 15, clipboardClearSeconds: 30 },
+    settings: {
+      autoLockMinutes: 15,
+      clipboardClearSeconds: 30,
+      terminalFontFamily: 'ubuntu-mono',
+      terminalFontSize: 14,
+      terminalBackground: '#300a24',
+    },
   };
 }
 
@@ -42,15 +48,24 @@ function boundedNumber(value, fallback, min, max) {
 }
 
 function normalizeTunnel(input) {
-  return {
+  const type = ['local', 'remote', 'dynamic'].includes(input.type) ? input.type : 'local';
+  const tunnel = {
     id: input.id ? validateId(input.id, 'Tunnel ID') : crypto.randomUUID(),
-    name: cleanString(input.name, 'Tên tunnel', 120) || 'Local tunnel',
-    type: 'local',
+    name:
+      cleanString(input.name, 'Tên tunnel', 120) ||
+      (type === 'dynamic' ? 'SOCKS proxy' : type === 'remote' ? 'Remote tunnel' : 'Local tunnel'),
+    type,
     bindHost: '127.0.0.1',
-    localPort: validatePort(input.localPort),
-    destinationHost: validateHost(input.destinationHost),
-    destinationPort: validatePort(input.destinationPort),
   };
+  if (type === 'dynamic') {
+    tunnel.localPort = validatePort(input.localPort);
+    return tunnel;
+  }
+  if (type === 'remote') tunnel.remotePort = validatePort(input.remotePort);
+  else tunnel.localPort = validatePort(input.localPort);
+  tunnel.destinationHost = validateHost(input.destinationHost);
+  tunnel.destinationPort = validatePort(input.destinationPort);
+  return tunnel;
 }
 
 function migratePayload(payload) {
@@ -66,6 +81,17 @@ function migratePayload(payload) {
       clipboardClearSeconds: Number.isInteger(source.settings && source.settings.clipboardClearSeconds)
         ? Math.min(300, Math.max(0, source.settings.clipboardClearSeconds))
         : 30,
+      terminalFontFamily: ['ubuntu-mono', 'cascadia', 'consolas'].includes(
+        source.settings && source.settings.terminalFontFamily,
+      )
+        ? source.settings.terminalFontFamily
+        : 'ubuntu-mono',
+      terminalFontSize: Math.round(boundedNumber(source.settings && source.settings.terminalFontSize, 14, 10, 28)),
+      terminalBackground: /^#[0-9a-f]{6}$/i.test(
+        String((source.settings && source.settings.terminalBackground) || ''),
+      )
+        ? source.settings.terminalBackground
+        : '#300a24',
     },
   };
 
@@ -78,11 +104,19 @@ function migratePayload(payload) {
     connectTimeout: boundedNumber(conn.connectTimeout, 20000, 1000, 120000),
     keepaliveInterval: boundedNumber(conn.keepaliveInterval, 20000, 0, 120000),
     autoReconnect: Boolean(conn.autoReconnect),
+    jumpHostId: typeof conn.jumpHostId === 'string' ? conn.jumpHostId : '',
     sftpRoot: typeof conn.sftpRoot === 'string' ? conn.sftpRoot : '/',
     tunnels: Array.isArray(conn.tunnels)
-      ? conn.tunnels.slice(0, 20).map((tunnel) => {
-          try { return normalizeTunnel(tunnel); } catch { return null; }
-        }).filter(Boolean)
+      ? conn.tunnels
+          .slice(0, 20)
+          .map((tunnel) => {
+            try {
+              return normalizeTunnel(tunnel);
+            } catch {
+              return null;
+            }
+          })
+          .filter(Boolean)
       : [],
   }));
   return migrated;
@@ -174,7 +208,11 @@ class Vault {
   /** Bản ghi rút gọn gửi sang renderer: không kèm mật khẩu/passphrase. */
   _safe(conn) {
     const { password, passphrase, ...rest } = conn;
-    return { ...rest, hasPassword: Boolean(password), hasPassphrase: Boolean(passphrase) };
+    return {
+      ...rest,
+      hasPassword: Boolean(password),
+      hasPassphrase: Boolean(passphrase),
+    };
   }
 
   listConnections() {
@@ -204,7 +242,10 @@ class Vault {
       privateKeyPath: cleanString(input.privateKeyPath, 'Đường dẫn private key', 2048),
       group: cleanString(input.group, 'Nhóm', 80),
       tags: Array.isArray(input.tags)
-        ? input.tags.map((tag) => cleanString(tag, 'Tag', 40)).filter(Boolean).slice(0, 20)
+        ? input.tags
+            .map((tag) => cleanString(tag, 'Tag', 40))
+            .filter(Boolean)
+            .slice(0, 20)
         : cleanString(input.tags, 'Tag', 500)
             .split(',')
             .map((tag) => tag.trim())
@@ -214,18 +255,18 @@ class Vault {
       environment: normalizeEnvironment(input.environment),
       defaultDirectory: cleanString(input.defaultDirectory, 'Thư mục mặc định', 1024),
       sftpRoot: normalizeRemoteRoot(cleanString(input.sftpRoot, 'SFTP root', 1024) || '/'),
-      tunnels: input.tunnels === undefined
-        ? structuredClone(prev.tunnels || [])
-        : Array.isArray(input.tunnels)
-          ? input.tunnels.slice(0, 20).map(normalizeTunnel)
-          : [],
+      tunnels:
+        input.tunnels === undefined
+          ? structuredClone(prev.tunnels || [])
+          : Array.isArray(input.tunnels)
+            ? input.tunnels.slice(0, 20).map(normalizeTunnel)
+            : [],
       notes: cleanString(input.notes, 'Ghi chú', 4000, { trim: false }),
-      onConnect: input.onConnect
-        ? inspectCommand(input.onConnect).command
-        : '',
+      onConnect: input.onConnect ? inspectCommand(input.onConnect).command : '',
       connectTimeout: boundedNumber(input.connectTimeout, 20000, 1000, 120000),
       keepaliveInterval: boundedNumber(input.keepaliveInterval, 20000, 0, 120000),
       autoReconnect: Boolean(input.autoReconnect),
+      jumpHostId: input.jumpHostId ? validateId(input.jumpHostId, 'Jump host ID') : '',
       favorite: Boolean(input.favorite),
       createdAt: prev.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -234,8 +275,7 @@ class Vault {
     };
     // Chuỗi rỗng = giữ nguyên bí mật cũ; giá trị mới = ghi đè
     conn.password = input.password === '' ? prev.password : normalizeSecret(input.password, 'Mật khẩu');
-    conn.passphrase =
-      input.passphrase === '' ? prev.passphrase : normalizeSecret(input.passphrase, 'Passphrase');
+    conn.passphrase = input.passphrase === '' ? prev.passphrase : normalizeSecret(input.passphrase, 'Passphrase');
     if (conn.authType === 'password') delete conn.passphrase;
     else delete conn.password;
 
@@ -368,6 +408,19 @@ class Vault {
       throw new Error('Thời gian xoá clipboard phải từ 0 đến 300 giây');
     }
     this.data.settings.clipboardClearSeconds = clipboardClearSeconds;
+    const terminalFontFamily = String(input.terminalFontFamily || this.data.settings.terminalFontFamily);
+    if (!['ubuntu-mono', 'cascadia', 'consolas'].includes(terminalFontFamily)) {
+      throw new Error('Font terminal không hợp lệ');
+    }
+    this.data.settings.terminalFontFamily = terminalFontFamily;
+    const terminalFontSize = Number(input.terminalFontSize ?? this.data.settings.terminalFontSize);
+    if (!Number.isInteger(terminalFontSize) || terminalFontSize < 10 || terminalFontSize > 28) {
+      throw new Error('Cỡ chữ terminal phải từ 10 đến 28');
+    }
+    this.data.settings.terminalFontSize = terminalFontSize;
+    const terminalBackground = String(input.terminalBackground || this.data.settings.terminalBackground);
+    if (!/^#[0-9a-f]{6}$/i.test(terminalBackground)) throw new Error('Màu nền terminal không hợp lệ');
+    this.data.settings.terminalBackground = terminalBackground.toLowerCase();
     this._persist();
     return this.getSettings();
   }
@@ -442,7 +495,7 @@ class Vault {
     const incoming = migratePayload(payload.data);
     const validatedConnections = incoming.connections.map((conn) => ({
       ...conn,
-      id: crypto.randomUUID(),
+      sourceId: conn.id ? validateId(conn.id, 'Connection ID') : crypto.randomUUID(),
       name: cleanString(conn.name, 'Tên hiển thị', 120) || validateHost(conn.host),
       host: validateHost(conn.host),
       port: validatePort(conn.port),
@@ -450,26 +503,38 @@ class Vault {
       authType: conn.authType === 'password' ? 'password' : 'key',
       privateKeyPath: cleanString(conn.privateKeyPath, 'Đường dẫn private key', 2048),
       group: cleanString(conn.group, 'Nhóm', 80),
-      tags: (conn.tags || []).map((tag) => cleanString(tag, 'Tag', 40)).filter(Boolean).slice(0, 20),
+      tags: (conn.tags || [])
+        .map((tag) => cleanString(tag, 'Tag', 40))
+        .filter(Boolean)
+        .slice(0, 20),
       color: /^#[0-9a-f]{6}$/i.test(String(conn.color || '')) ? conn.color : '',
       defaultDirectory: cleanString(conn.defaultDirectory, 'Thư mục mặc định', 1024),
       notes: cleanString(conn.notes, 'Ghi chú', 4000, { trim: false }),
       onConnect: conn.onConnect ? inspectCommand(conn.onConnect).command : '',
       environment: normalizeEnvironment(conn.environment),
-      password:
-        conn.authType === 'password' ? normalizeSecret(conn.password, 'Mật khẩu') : undefined,
-      passphrase:
-        conn.authType !== 'password' ? normalizeSecret(conn.passphrase, 'Passphrase') : undefined,
+      password: conn.authType === 'password' ? normalizeSecret(conn.password, 'Mật khẩu') : undefined,
+      passphrase: conn.authType !== 'password' ? normalizeSecret(conn.passphrase, 'Passphrase') : undefined,
     }));
-    const existingEndpoints = new Set(
-      this.data.connections.map((conn) => `${conn.username}\u0000${conn.host}\u0000${conn.port}`)
+    const endpointIds = new Map(
+      this.data.connections.map((conn) => [`${conn.username}\u0000${conn.host}\u0000${conn.port}`, conn.id]),
     );
+    const importedIds = new Map();
+    const plannedEndpointIds = new Map(endpointIds);
+    for (const conn of validatedConnections) {
+      const endpoint = `${conn.username}\u0000${conn.host}\u0000${conn.port}`;
+      const id = plannedEndpointIds.get(endpoint) || crypto.randomUUID();
+      plannedEndpointIds.set(endpoint, id);
+      importedIds.set(conn.sourceId, id);
+    }
     let connectionsAdded = 0;
     for (const conn of validatedConnections) {
       const endpoint = `${conn.username}\u0000${conn.host}\u0000${conn.port}`;
-      if (existingEndpoints.has(endpoint)) continue;
-      existingEndpoints.add(endpoint);
-      this.data.connections.push({ ...conn, id: crypto.randomUUID() });
+      if (endpointIds.has(endpoint)) continue;
+      const id = importedIds.get(conn.sourceId);
+      const jumpHostId = conn.jumpHostId ? importedIds.get(conn.jumpHostId) || '' : '';
+      const { sourceId, ...clean } = conn;
+      this.data.connections.push({ ...clean, id, jumpHostId });
+      endpointIds.set(endpoint, id);
       connectionsAdded += 1;
     }
 
@@ -492,7 +557,11 @@ class Vault {
       snippetsAdded += 1;
     }
     this._persist();
-    return { connectionsAdded, snippetsAdded, includesCredentials: Boolean(payload.includesCredentials) };
+    return {
+      connectionsAdded,
+      snippetsAdded,
+      includesCredentials: Boolean(payload.includesCredentials),
+    };
   }
 
   /**
@@ -527,12 +596,10 @@ class Vault {
       const username = fields.user || process.env.USERNAME || process.env.USER || '';
       const port = Number(fields.port) || 22;
       const duplicate = this.data.connections.some(
-        (c) => c.host === host && c.username === username && c.port === port
+        (c) => c.host === host && c.username === username && c.port === port,
       );
       if (duplicate) continue;
-      const keyPath = fields.identityfile
-        ? currentPlatform.expandLocalPath(fields.identityfile)
-        : '';
+      const keyPath = fields.identityfile ? currentPlatform.expandLocalPath(fields.identityfile) : '';
       this.saveConnection({
         name: alias,
         host,

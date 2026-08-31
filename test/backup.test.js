@@ -28,7 +28,15 @@ function ok(label) {
 
   const source = new Vault(path.join(tmpDir, 'source.enc'));
   await source.init('master-password-source');
-  source.saveConnection({
+  const bastion = source.saveConnection({
+    name: 'Bastion',
+    host: 'bastion.example.com',
+    port: 22,
+    username: 'jump',
+    authType: 'key',
+    privateKeyPath: '~/.ssh/id_ed25519',
+  });
+  const production = source.saveConnection({
     name: 'Production',
     host: 'prod.example.com',
     port: 22,
@@ -36,7 +44,9 @@ function ok(label) {
     authType: 'password',
     password: 'credential-never-plain',
     environment: 'production',
+    jumpHostId: bastion.id,
   });
+  source.saveTunnel(production.id, { type: 'dynamic', name: 'SOCKS', localPort: 1080 });
   source.saveSnippet({ name: 'Uptime', command: 'uptime', autoRun: false });
 
   await assert.rejects(() => source.createEncryptedBackup('too-short'), /12 ký tự/);
@@ -61,10 +71,14 @@ function ok(label) {
   const imported = await target.importEncryptedBackup(withoutSecrets, 'backup-password-123');
   assert.deepStrictEqual(
     { connectionsAdded: imported.connectionsAdded, snippetsAdded: imported.snippetsAdded },
-    { connectionsAdded: 1, snippetsAdded: 1 }
+    { connectionsAdded: 2, snippetsAdded: 1 }
   );
-  assert.strictEqual(target.getConnectionFull(target.listConnections()[0].id).password, undefined);
-  assert.strictEqual(target.listConnections()[0].environment, 'production');
+  const importedProduction = target.listConnections().find((conn) => conn.host === 'prod.example.com');
+  const importedBastion = target.listConnections().find((conn) => conn.host === 'bastion.example.com');
+  assert.strictEqual(target.getConnectionFull(importedProduction.id).password, undefined);
+  assert.strictEqual(importedProduction.environment, 'production');
+  assert.strictEqual(importedProduction.jumpHostId, importedBastion.id);
+  assert.strictEqual(importedProduction.tunnels[0].type, 'dynamic');
   ok('import khôi phục dữ liệu, không tự nhập credential đã loại trừ');
 
   const again = await target.importEncryptedBackup(withoutSecrets, 'backup-password-123');
@@ -79,7 +93,8 @@ function ok(label) {
   await secretTarget.init('master-password-secret-target');
   await secretTarget.importEncryptedBackup(withSecrets, 'backup-password-456');
   assert.strictEqual(
-    secretTarget.getConnectionFull(secretTarget.listConnections()[0].id).password,
+    secretTarget.getConnectionFull(secretTarget.listConnections().find((conn) => conn.host === 'prod.example.com').id)
+      .password,
     'credential-never-plain'
   );
   ok('credential chỉ được khôi phục khi người dùng chủ động chọn xuất kèm');

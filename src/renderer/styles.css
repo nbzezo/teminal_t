@@ -38,7 +38,8 @@
   --button-bg: rgba(0, 0, 0, 0.07);
   --button-hover: rgba(0, 0, 0, 0.12);
   --entry-bg: #ffffff;
-  --shadow-dialog: 0 12px 32px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
+  --shadow-dialog:
+    0 12px 32px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
   --shadow-toast: 0 6px 20px rgba(0, 0, 0, 0.28);
   --toast-bg: #383838;
   --toast-fg: #ffffff;
@@ -56,7 +57,8 @@
   --sidebar-w: 280px;
 
   --font-ui: "Ubuntu Sans", "Ubuntu", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Ubuntu Sans Mono", "Ubuntu Mono", "Cascadia Mono", Consolas, monospace;
+  --font-mono:
+    "Ubuntu Sans Mono", "Ubuntu Mono", "Cascadia Mono", Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -77,7 +79,8 @@
     --button-bg: rgba(255, 255, 255, 0.1);
     --button-hover: rgba(255, 255, 255, 0.16);
     --entry-bg: rgba(255, 255, 255, 0.08);
-    --shadow-dialog: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-dialog:
+      0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
     --toast-bg: #4a4a4a;
     --destructive-bg: #c01c28;
     --destructive-bg-hover: #d02b37;
@@ -549,6 +552,11 @@ kbd {
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   min-height: 46px;
+}
+
+#snippet-search {
+  width: 150px;
+  min-width: 110px;
 }
 .snippet-list {
   display: flex;

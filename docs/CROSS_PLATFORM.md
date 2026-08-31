@@ -60,47 +60,46 @@ QWebEngineView + xterm.js. Dependency và chi phí đóng gói Chromium vốn đ
 
 ## Ma trận kiểm thử
 
-| Hạng mục | Windows 10/11 | Ubuntu 22.04/24.04 | Tự động hóa hiện có |
-|---|---:|---:|---|
-| Khởi động ứng dụng | Bắt buộc | Bắt buộc | Electron UI test, CI 3 runner |
-| Giao diện, DPI, theme, font | Bắt buộc | Bắt buộc | theme/UI test; DPI cần kiểm thủ công |
-| SSH mật khẩu | Bắt buộc | Bắt buộc | SSH server loopback thật |
-| SSH private key | Bắt buộc | Bắt buộc | Ed25519 loopback |
-| SSH Agent | Nếu hỗ trợ | Nếu hỗ trợ | unit test adapter; thủ công với agent thật |
-| Terminal tương tác | Bắt buộc | Bắt buộc | PTY/input/resize/UTF-8 tự động; app full-screen thủ công |
-| SFTP upload/download | Bắt buộc | Bắt buộc | Mock integration đạt; cần test máy Ubuntu thật |
-| Jump Host | Bắt buộc | Bắt buộc | Chưa triển khai |
-| Port forwarding | Bắt buộc | Bắt buộc | Chưa triển khai |
-| Import/export cấu hình | Bắt buộc | Bắt buộc | Import có test; export chưa triển khai |
-| Đóng gói | Bắt buộc | Bắt buộc | CI build NSIS/portable/AppImage/deb |
+| Hạng mục                    | Windows 10/11 | Ubuntu 22.04/24.04 | Tự động hóa hiện có                                      |
+| --------------------------- | ------------: | -----------------: | -------------------------------------------------------- |
+| Khởi động ứng dụng          |      Bắt buộc |           Bắt buộc | Electron UI test, CI 3 runner                            |
+| Giao diện, DPI, theme, font |      Bắt buộc |           Bắt buộc | theme/UI test; DPI cần kiểm thủ công                     |
+| SSH mật khẩu                |      Bắt buộc |           Bắt buộc | SSH server loopback thật                                 |
+| SSH private key             |      Bắt buộc |           Bắt buộc | Ed25519 loopback                                         |
+| SSH Agent                   |    Nếu hỗ trợ |         Nếu hỗ trợ | unit test adapter; thủ công với agent thật               |
+| Terminal tương tác          |      Bắt buộc |           Bắt buộc | PTY/input/resize/UTF-8 tự động; app full-screen thủ công |
+| SFTP upload/download        |      Bắt buộc |           Bắt buộc | Mock integration đạt; cần test máy Ubuntu thật           |
+| Jump Host                   |      Bắt buộc |           Bắt buộc | Chưa triển khai                                          |
+| Port forwarding             |      Bắt buộc |           Bắt buộc | Mock TCP integration đạt; cần test máy thật              |
+| Import/export cấu hình      |      Bắt buộc |           Bắt buộc | Import có test; export chưa triển khai                   |
+| Đóng gói                    |      Bắt buộc |           Bắt buộc | CI build NSIS/portable/AppImage/deb                      |
 
 ## GAP Analysis
 
-| Thành phần | Windows | Ubuntu | Vấn đề hiện tại | Thay đổi cần thiết | Trạng thái kiểm chứng |
-|---|---|---|---|---|---|
-| Code dùng chung | Có | Có | Stack là Electron, không phải PySide6 như mô tả đầu vào | Không viết lại; duy trì API Electron/Node đa nền tảng | Rà source + test Windows |
-| Đường dẫn/config/cache | `app.getPath('userData')` | `app.getPath('userData')` | Trước đây mở rộng `~` rải trong SSH/vault | Đã gom vào platform adapter; không hard-code ổ đĩa/home | Unit test mô phỏng hai OS |
-| SSH password/key/passphrase | Có | Có | Cần xác nhận thực tế trên Ubuntu | Chạy CI và checklist trên máy Ubuntu | Password/key test thực tế trên Windows; Ubuntu chờ CI/máy thật |
-| SSH Agent | Named pipe hoặc `SSH_AUTH_SOCK` | `SSH_AUTH_SOCK` | Availability tùy dịch vụ/session desktop | Fallback chọn key đã có | Unit test adapter; chưa test agent thật |
-| Terminal xterm.js | Có | Có | Chưa tự động hóa `vim/top/less` và IME Linux thật | Test thủ công full-screen, clipboard, GNOME/KDE | PTY/resize/UTF-8/UI test trên Windows |
-| Phím tắt | Có | Có | Clipboard phụ thuộc quyền clipboard desktop | Kiểm thủ công GNOME/KDE; giữ Ctrl+C/Ctrl+D cho PTY | Source + UI/IME test |
-| Theme/font/DPI | Có | Có | Frameless window/compositor và scaling cần máy thật | Test 100/125/150/200%, GNOME Wayland/X11, KDE | Theme test Windows; Ubuntu chờ CI/máy thật |
-| System tray/notification | Không | Không | Chưa có tính năng; không ảnh hưởng startup | Chỉ triển khai khi có yêu cầu sản phẩm | Rà source |
-| SFTP/quyền remote | Có | Có | Chưa kiểm máy Ubuntu thật/drag-drop/quick edit | POSIX scope guard, CRUD, transfer, chmod | Unit/mock integration đạt |
-| Jump Host/ProxyJump | Không | Không | Model và SSH manager chưa hỗ trợ | Thêm tunnel client riêng, host-key verification cho từng hop | GAP, chưa triển khai |
-| Port forwarding | Không | Không | Chưa có model/UI/lifecycle | Thêm local/remote/dynamic forwarding và teardown | GAP, chưa triển khai |
-| Shell cục bộ | Không dùng | Không dùng | Không có chức năng chạy local command | Giữ tách biệt khỏi remote PTY | Rà source |
-| Storage/migration | Vault JSON mã hóa | Vault JSON mã hóa | Chưa có export/restore được hỗ trợ | Thêm schema migration và import/export portable | Round-trip/UTF-8 test Windows |
-| Background/teardown | Event-driven | Event-driven | Cần soak test khi đóng trong lúc đang kết nối | Theo dõi mọi client/stream, disconnect ở lock/quit | Unit/integration test Windows |
-| Đóng gói | NSIS + portable | AppImage + deb | Chưa có icon phát hành; chưa ký | Bổ sung asset, code signing Windows, kiểm install sạch | Cấu hình + CI; build tại máy hiện tại được ghi ở báo cáo chạy |
+| Thành phần                  | Windows                         | Ubuntu                    | Vấn đề hiện tại                                         | Thay đổi cần thiết                                        | Trạng thái kiểm chứng                                          |
+| --------------------------- | ------------------------------- | ------------------------- | ------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------- |
+| Code dùng chung             | Có                              | Có                        | Stack là Electron, không phải PySide6 như mô tả đầu vào | Không viết lại; duy trì API Electron/Node đa nền tảng     | Rà source + test Windows                                       |
+| Đường dẫn/config/cache      | `app.getPath('userData')`       | `app.getPath('userData')` | Trước đây mở rộng `~` rải trong SSH/vault               | Đã gom vào platform adapter; không hard-code ổ đĩa/home   | Unit test mô phỏng hai OS                                      |
+| SSH password/key/passphrase | Có                              | Có                        | Cần xác nhận thực tế trên Ubuntu                        | Chạy CI và checklist trên máy Ubuntu                      | Password/key test thực tế trên Windows; Ubuntu chờ CI/máy thật |
+| SSH Agent                   | Named pipe hoặc `SSH_AUTH_SOCK` | `SSH_AUTH_SOCK`           | Availability tùy dịch vụ/session desktop                | Fallback chọn key đã có                                   | Unit test adapter; chưa test agent thật                        |
+| Terminal xterm.js           | Có                              | Có                        | Chưa tự động hóa `vim/top/less` và IME Linux thật       | Test thủ công full-screen, clipboard, GNOME/KDE           | PTY/resize/UTF-8/UI test trên Windows                          |
+| Phím tắt                    | Có                              | Có                        | Clipboard phụ thuộc quyền clipboard desktop             | Kiểm thủ công GNOME/KDE; giữ Ctrl+C/Ctrl+D cho PTY        | Source + UI/IME test                                           |
+| Theme/font/DPI              | Có                              | Có                        | Frameless window/compositor và scaling cần máy thật     | Test 100/125/150/200%, GNOME Wayland/X11, KDE             | Theme test Windows; Ubuntu chờ CI/máy thật                     |
+| System tray/notification    | Không                           | Không                     | Chưa có tính năng; không ảnh hưởng startup              | Chỉ triển khai khi có yêu cầu sản phẩm                    | Rà source                                                      |
+| SFTP/quyền remote           | Có                              | Có                        | Chưa kiểm máy Ubuntu thật/drag-drop/quick edit          | POSIX scope guard, CRUD, transfer, chmod                  | Unit/mock integration đạt                                      |
+| Jump Host/ProxyJump         | Có                              | Có                        | Cần kiểm máy Ubuntu thật                                | Một tầng qua `forwardOut`, host-key verification từng hop | Loopback integration đạt                                       |
+| Port forwarding             | Có                              | Có                        | Cần kiểm firewall/IPv6 trên máy thật                    | Local/remote/dynamic loopback-only và teardown theo phiên | Mock TCP integration đạt                                       |
+| Shell cục bộ                | Không dùng                      | Không dùng                | Không có chức năng chạy local command                   | Giữ tách biệt khỏi remote PTY                             | Rà source                                                      |
+| Storage/migration           | Vault JSON mã hóa               | Vault JSON mã hóa         | Chưa kiểm restore chéo trên Ubuntu thật                 | Backup mã hóa schema v4, import dedupe                    | Round-trip test đạt                                            |
+| Background/teardown         | Event-driven                    | Event-driven              | Cần soak test khi đóng trong lúc đang kết nối           | Theo dõi mọi client/stream, disconnect ở lock/quit        | Unit/integration test Windows                                  |
+| Đóng gói                    | NSIS + portable                 | AppImage + deb            | Chưa có icon phát hành; chưa ký                         | Bổ sung asset, code signing Windows, kiểm install sạch    | Cấu hình + CI; build tại máy hiện tại được ghi ở báo cáo chạy  |
 
-Các dòng Jump Host, remote/dynamic Port Forwarding vẫn chưa đạt. Không được coi toàn
-bộ yêu cầu đa nền tảng đã hoàn thành cho tới khi các tính năng nằm trong phạm vi sản phẩm được
-triển khai và chạy trên máy thật của cả hai hệ điều hành.
+Jump Host và ba chế độ Port Forwarding đã đạt kiểm thử loopback; chưa được coi là đã xác minh
+đa nền tảng cho tới khi chạy trên máy thật của cả Windows và Ubuntu.
 
 ## Trạng thái kiểm chứng ngày 2026-08-31
 
-- **Windows (máy hiện tại):** `npm test` đạt 155/155; bản unpacked được tạo thành công tại
+- **Windows (máy hiện tại):** `npm test` đạt 162/162; bản unpacked được tạo thành công tại
   `dist/win-unpacked`. NSIS/portable trong lượt rà soát này bị chặn ở cache NSIS ngoài
   workspace (`EPERM`), không phải lỗi compile/package source.
 - **Ubuntu 22.04/24.04:** đã rà source, có unit test adapter, cấu hình package và CI/Xvfb;

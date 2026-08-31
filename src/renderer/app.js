@@ -41,6 +41,12 @@ const TERM_THEME = {
   brightWhite: '#EEEEEC',
 };
 
+const TERMINAL_FONTS = {
+  'ubuntu-mono': '"Ubuntu Sans Mono", "Ubuntu Mono", monospace',
+  cascadia: '"Cascadia Mono", "Cascadia Code", monospace',
+  consolas: 'Consolas, monospace',
+};
+
 const state = {
   connections: [],
   snippets: [],
@@ -68,13 +74,15 @@ let toastTimer = null;
 function setStatus(text, kind) {
   const toast = $('statusbar');
   $('status-text').textContent = text;
-  toast.className =
-    'toast' + (kind === 'error' ? ' toast-error' : kind === 'ok' ? ' toast-ok' : '');
+  toast.className = 'toast' + (kind === 'error' ? ' toast-error' : kind === 'ok' ? ' toast-ok' : '');
   toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toast.hidden = true;
-  }, kind === 'error' ? 6000 : 3500);
+  toastTimer = setTimeout(
+    () => {
+      toast.hidden = true;
+    },
+    kind === 'error' ? 6000 : 3500,
+  );
 }
 
 /** Cập nhật tiêu đề thanh trên theo phiên đang xem. */
@@ -83,13 +91,10 @@ function renderHeader() {
   const conn = session && state.connections.find((c) => c.id === session.connId);
   if (session && conn) {
     $('hb-title').textContent = conn.name;
-    $('hb-subtitle').textContent =
-      conn.username + '@' + conn.host + (conn.port !== 22 ? ':' + conn.port : '');
+    $('hb-subtitle').textContent = conn.username + '@' + conn.host + (conn.port !== 22 ? ':' + conn.port : '');
   } else {
     $('hb-title').textContent = 'SSH Manager';
-    $('hb-subtitle').textContent = state.sessions.size
-      ? state.sessions.size + ' phiên đang mở'
-      : 'Chưa có phiên nào';
+    $('hb-subtitle').textContent = state.sessions.size ? state.sessions.size + ' phiên đang mở' : 'Chưa có phiên nào';
   }
 }
 
@@ -160,8 +165,7 @@ async function initLockScreen() {
 
   if (lockMode === 'setup') {
     $('lock-title').textContent = 'Tạo kho kết nối';
-    $('lock-subtitle').textContent =
-      'Đặt master password để mã hoá toàn bộ máy chủ và mật khẩu đã lưu.';
+    $('lock-subtitle').textContent = 'Đặt master password để mã hoá toàn bộ máy chủ và mật khẩu đã lưu.';
     $('lock-password').placeholder = 'Master password (tối thiểu 8 ký tự)';
     $('lock-password').setAttribute('autocomplete', 'new-password');
     $('lock-password-confirm').hidden = false;
@@ -236,12 +240,7 @@ async function refreshAll() {
  * riêng đ/Đ không phải chữ có dấu thanh nên phải thay tay.
  */
 function boDau(text) {
-  return String(text)
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase();
+  return String(text).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
 }
 
 function matchesFilter(conn, needle) {
@@ -249,7 +248,7 @@ function matchesFilter(conn, needle) {
   const hay = boDau(
     [conn.name, conn.host, conn.username, conn.group, conn.environment, ...(conn.tags || []), conn.notes]
       .filter(Boolean)
-      .join(' ')
+      .join(' '),
   );
   return hay.includes(boDau(needle));
 }
@@ -288,9 +287,7 @@ function renderConnections() {
     groups.get(key).push(conn);
   }
 
-  for (const [groupName, items] of [...groups.entries()].sort((a, b) =>
-    a[0].localeCompare(b[0])
-  )) {
+  for (const [groupName, items] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const title = document.createElement('div');
     title.className = 'group-title';
     title.textContent = groupName;
@@ -378,9 +375,9 @@ async function openSession(connId) {
   $('terminals').appendChild(pane);
 
   const term = new Terminal({
-    theme: TERM_THEME,
-    fontFamily: '"Ubuntu Sans Mono", "Ubuntu Mono", "Cascadia Mono", Consolas, monospace',
-    fontSize: 14,
+    theme: { ...TERM_THEME, background: state.settings.terminalBackground || TERM_THEME.background },
+    fontFamily: TERMINAL_FONTS[state.settings.terminalFontFamily] || TERMINAL_FONTS['ubuntu-mono'],
+    fontSize: state.settings.terminalFontSize || 14,
     lineHeight: 1.1,
     cursorBlink: true,
     cursorStyle: 'block',
@@ -540,14 +537,21 @@ function scheduleReconnect(sessionId) {
   }
   const delay = 1000 * 2 ** session.reconnectAttempts;
   session.reconnectAttempts += 1;
-  session.term.writeln('\r\n\x1b[33m— Kết nối lại lần ' + session.reconnectAttempts + ' sau ' + delay / 1000 + ' giây —\x1b[0m');
+  session.term.writeln(
+    '\r\n\x1b[33m— Kết nối lại lần ' + session.reconnectAttempts + ' sau ' + delay / 1000 + ' giây —\x1b[0m',
+  );
   session.reconnectTimer = setTimeout(async () => {
     session.reconnectTimer = null;
     if (session.manualClose || !state.sessions.has(sessionId)) return;
     session.status = 'connecting';
     renderTabs();
     try {
-      await call(bridge.ssh.reconnect(sessionId, session.connId, { cols: session.term.cols, rows: session.term.rows }));
+      await call(
+        bridge.ssh.reconnect(sessionId, session.connId, {
+          cols: session.term.cols,
+          rows: session.term.rows,
+        }),
+      );
     } catch (err) {
       session.status = 'gone';
       session.term.writeln('\r\n\x1b[31m✗ ' + err.message + '\x1b[0m');
@@ -560,17 +564,31 @@ function scheduleReconnect(sessionId) {
  * Lệnh nhanh
  * ========================================================================= */
 
-function renderSnippets() {
+function renderSnippets(query = $('snippet-search').value) {
   const list = $('snippet-list');
   list.textContent = '';
-  if (state.snippets.length === 0) {
+  const needle = String(query || '')
+    .trim()
+    .toLocaleLowerCase('vi');
+  const snippets = state.snippets.filter(
+    (snippet) =>
+      !needle ||
+      [snippet.name, snippet.group, snippet.command].some((value) =>
+        String(value || '')
+          .toLocaleLowerCase('vi')
+          .includes(needle),
+      ),
+  );
+  if (snippets.length === 0) {
     const empty = document.createElement('span');
     empty.className = 'snippet-empty';
-    empty.textContent = 'Chưa có lệnh nào — lưu các lệnh hay dùng để bấm một phát là chạy.';
+    empty.textContent = needle
+      ? 'Không tìm thấy lệnh phù hợp.'
+      : 'Chưa có lệnh nào — lưu các lệnh hay dùng để bấm một phát là chạy.';
     list.appendChild(empty);
     return;
   }
-  for (const snippet of state.snippets) {
+  for (const snippet of snippets) {
     const chip = document.createElement('div');
     chip.className = 'snippet-chip';
     chip.title = snippet.command;
@@ -600,19 +618,28 @@ async function runSnippet(snippet) {
   if (session.status !== 'connected') {
     return setStatus('Phiên hiện tại chưa kết nối.', 'error');
   }
+  let command = snippet.command;
+  const variableNames = [
+    ...new Set([...command.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]{0,63})\}/g)].map((match) => match[1])),
+  ];
+  for (const name of variableNames) {
+    const value = window.prompt('Giá trị cho ${' + name + '}:');
+    if (value === null) return setStatus('Đã huỷ điền biến.', undefined);
+    if (value.length > 1024 || /[\r\n\0]/.test(value)) return setStatus('Giá trị biến không hợp lệ.', 'error');
+    command = command.replaceAll('${' + name + '}', value);
+  }
   if (snippet.autoRun) {
     const confirmed = await call(
-      bridge.dialogs.confirm(
-        snippet.dangerous ? 'Lệnh có rủi ro cao — vẫn chạy?' : 'Chạy lệnh nhanh này?',
-        snippet.command
-      )
+      bridge.dialogs.confirm(snippet.dangerous ? 'Lệnh có rủi ro cao — vẫn chạy?' : 'Chạy lệnh nhanh này?', command),
     );
     if (!confirmed) return setStatus('Đã huỷ lệnh.', undefined);
   }
-  bridge.ssh.input(state.activeSessionId, snippet.command + (snippet.autoRun ? '\n' : ''));
+  bridge.ssh.input(state.activeSessionId, command + (snippet.autoRun ? '\n' : ''));
   session.term.focus();
   setStatus('Đã gửi: ' + snippet.name, 'ok');
 }
+
+$('snippet-search').addEventListener('input', (event) => renderSnippets(event.target.value));
 
 /* =========================================================================
  * Form kết nối
@@ -636,8 +663,21 @@ function openConnectionModal(connId) {
   $('f-onconnect').value = conn ? conn.onConnect || '' : '';
   $('f-default-directory').value = conn ? conn.defaultDirectory || '' : '';
   $('f-sftp-root').value = conn ? conn.sftpRoot || '/' : '/';
+  const jumpSelect = $('f-jump-host');
+  jumpSelect.textContent = '';
+  const noJump = document.createElement('option');
+  noJump.value = '';
+  noJump.textContent = 'Không dùng';
+  jumpSelect.appendChild(noJump);
+  for (const candidate of state.connections.filter((item) => item.id !== connId)) {
+    const option = document.createElement('option');
+    option.value = candidate.id;
+    option.textContent = candidate.name + ' — ' + candidate.host;
+    jumpSelect.appendChild(option);
+  }
+  jumpSelect.value = conn ? conn.jumpHostId || '' : '';
   $('f-timeout').value = conn ? conn.connectTimeout || 20000 : 20000;
-  $('f-keepalive').value = conn ? conn.keepaliveInterval ?? 20000 : 20000;
+  $('f-keepalive').value = conn ? (conn.keepaliveInterval ?? 20000) : 20000;
   $('f-auto-reconnect').checked = Boolean(conn && conn.autoReconnect);
   $('f-notes').value = conn ? conn.notes || '' : '';
   $('f-password').value = '';
@@ -692,6 +732,7 @@ $('conn-form').addEventListener('submit', async (event) => {
     onConnect: $('f-onconnect').value,
     defaultDirectory: $('f-default-directory').value,
     sftpRoot: $('f-sftp-root').value,
+    jumpHostId: $('f-jump-host').value,
     connectTimeout: $('f-timeout').value,
     keepaliveInterval: $('f-keepalive').value,
     autoReconnect: $('f-auto-reconnect').checked,
@@ -711,7 +752,7 @@ $('btn-conn-delete').addEventListener('click', async () => {
   const conn = state.connections.find((c) => c.id === state.editingConnId);
   if (!conn) return;
   const confirmed = await call(
-    bridge.dialogs.confirm('Xoá kết nối “' + conn.name + '”?', 'Thao tác này không thể hoàn tác.')
+    bridge.dialogs.confirm('Xoá kết nối “' + conn.name + '”?', 'Thao tác này không thể hoàn tác.'),
   );
   if (!confirmed) return;
   await call(bridge.connections.remove(conn.id));
@@ -757,7 +798,7 @@ $('snippet-form').addEventListener('submit', async (event) => {
         command: $('s-command').value,
         group: $('s-group').value,
         autoRun: $('s-autorun').checked,
-      })
+      }),
     );
   } catch (err) {
     return showError('snippet-error', err.message);
@@ -787,9 +828,7 @@ function openPalette() {
 
 function renderPalette(needle) {
   const query = needle.trim().toLowerCase();
-  state.paletteItems = sortConnections(
-    state.connections.filter((c) => matchesFilter(c, query))
-  ).slice(0, 12);
+  state.paletteItems = sortConnections(state.connections.filter((c) => matchesFilter(c, query))).slice(0, 12);
   state.paletteIndex = 0;
 
   const box = $('palette-results');
@@ -860,6 +899,9 @@ async function openSettings() {
   state.settings = await call(bridge.vault.settings());
   $('auto-lock-minutes').value = state.settings.autoLockMinutes;
   $('clipboard-clear-seconds').value = state.settings.clipboardClearSeconds;
+  $('terminal-font-family').value = state.settings.terminalFontFamily || 'ubuntu-mono';
+  $('terminal-font-size').value = state.settings.terminalFontSize || 14;
+  $('terminal-background').value = state.settings.terminalBackground || '#300a24';
   const list = $('app-info');
   list.textContent = '';
   const rows = [
@@ -905,7 +947,7 @@ async function renderKnownHosts() {
     forget.textContent = 'Quên';
     forget.addEventListener('click', async () => {
       const confirmed = await call(
-        bridge.dialogs.confirm('Quên host key đã tin cậy?', entry.host + '\n' + entry.fingerprint)
+        bridge.dialogs.confirm('Quên host key đã tin cậy?', entry.host + '\n' + entry.fingerprint),
       );
       if (!confirmed) return;
       await call(bridge.knownHosts.forget(entry.host));
@@ -937,10 +979,19 @@ $('security-settings-form').addEventListener('submit', async (event) => {
       bridge.vault.saveSettings({
         autoLockMinutes: Number($('auto-lock-minutes').value),
         clipboardClearSeconds: Number($('clipboard-clear-seconds').value),
-      })
+        terminalFontFamily: $('terminal-font-family').value,
+        terminalFontSize: Number($('terminal-font-size').value),
+        terminalBackground: $('terminal-background').value,
+      }),
     );
+    for (const session of state.sessions.values()) {
+      session.term.options.fontFamily = TERMINAL_FONTS[state.settings.terminalFontFamily];
+      session.term.options.fontSize = state.settings.terminalFontSize;
+      session.term.options.theme = { ...TERM_THEME, background: state.settings.terminalBackground };
+      session.fit.fit();
+    }
     scheduleAutoLock();
-    setStatus('Đã lưu thời gian tự khoá.', 'ok');
+    setStatus('Đã lưu cài đặt.', 'ok');
   } catch (err) {
     setStatus(err.message, 'error');
   }
@@ -953,7 +1004,7 @@ $('backup-form').addEventListener('submit', async (event) => {
     const result = await call(
       bridge.vault.exportBackup($('backup-password').value, {
         includeCredentials: $('backup-credentials').checked,
-      })
+      }),
     );
     if (!result.canceled) setStatus('Đã xuất backup mã hoá.', 'ok');
   } catch (err) {
@@ -970,10 +1021,7 @@ $('btn-import-backup').addEventListener('click', async () => {
     const result = await call(bridge.vault.importBackup(password));
     if (!result.canceled) {
       await refreshAll();
-      setStatus(
-        'Đã nhập ' + result.connectionsAdded + ' máy chủ và ' + result.snippetsAdded + ' snippet.',
-        'ok'
-      );
+      setStatus('Đã nhập ' + result.connectionsAdded + ' máy chủ và ' + result.snippetsAdded + ' snippet.', 'ok');
     }
   } catch (err) {
     showError('backup-error', err.message);
@@ -1007,7 +1055,7 @@ $('btn-import').addEventListener('click', async () => {
     await refreshAll();
     setStatus(
       'Đã nhập ' + result.added + '/' + result.scanned + ' mục từ ~/.ssh/config.',
-      result.added > 0 ? 'ok' : undefined
+      result.added > 0 ? 'ok' : undefined,
     );
   } catch (err) {
     setStatus(err.message, 'error');
@@ -1048,13 +1096,18 @@ async function loadSftp(remotePath) {
       const fullPath = result.path.replace(/\/$/, '') + '/' + item.name;
       name.addEventListener('click', () => {
         if (item.type === 'directory') loadSftp(fullPath);
-        else bridge.sftp.download(state.activeSessionId, fullPath).then(call).then((value) => {
-          if (!value.canceled) {
-            $('sftp-progress-row').hidden = true;
-            state.activeTransferId = null;
-            setStatus('Đã tải file xuống.', 'ok');
-          }
-        }).catch((err) => setStatus(err.message, 'error'));
+        else
+          bridge.sftp
+            .download(state.activeSessionId, fullPath)
+            .then(call)
+            .then((value) => {
+              if (!value.canceled) {
+                $('sftp-progress-row').hidden = true;
+                state.activeTransferId = null;
+                setStatus('Đã tải file xuống.', 'ok');
+              }
+            })
+            .catch((err) => setStatus(err.message, 'error'));
       });
       const meta = document.createElement('span');
       meta.className = 'sftp-meta';
@@ -1068,8 +1121,12 @@ async function loadSftp(remotePath) {
       rename.addEventListener('click', async () => {
         const next = window.prompt('Tên mới', item.name);
         if (!next || next === item.name) return;
-        try { await call(bridge.sftp.rename(state.activeSessionId, fullPath, next)); await loadSftp(result.path); }
-        catch (err) { showError('sftp-error', err.message); }
+        try {
+          await call(bridge.sftp.rename(state.activeSessionId, fullPath, next));
+          await loadSftp(result.path);
+        } catch (err) {
+          showError('sftp-error', err.message);
+        }
       });
       const chmod = document.createElement('button');
       chmod.type = 'button';
@@ -1078,8 +1135,12 @@ async function loadSftp(remotePath) {
       chmod.addEventListener('click', async () => {
         const mode = window.prompt('Permission dạng bát phân, ví dụ 644', '644');
         if (!mode) return;
-        try { await call(bridge.sftp.chmod(state.activeSessionId, fullPath, mode)); setStatus('Đã đổi permission.', 'ok'); }
-        catch (err) { showError('sftp-error', err.message); }
+        try {
+          await call(bridge.sftp.chmod(state.activeSessionId, fullPath, mode));
+          setStatus('Đã đổi permission.', 'ok');
+        } catch (err) {
+          showError('sftp-error', err.message);
+        }
       });
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -1089,7 +1150,9 @@ async function loadSftp(remotePath) {
         try {
           const removed = await call(bridge.sftp.remove(state.activeSessionId, fullPath, item.type === 'directory'));
           if (removed) await loadSftp(result.path);
-        } catch (err) { showError('sftp-error', err.message); }
+        } catch (err) {
+          showError('sftp-error', err.message);
+        }
       });
       actions.append(rename, chmod, remove);
       row.append(name, meta, actions);
@@ -1110,7 +1173,10 @@ $('btn-sftp').addEventListener('click', async () => {
 });
 $('sftp-refresh').addEventListener('click', () => loadSftp($('sftp-path').value));
 $('sftp-path').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') { event.preventDefault(); loadSftp(event.target.value); }
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    loadSftp(event.target.value);
+  }
 });
 $('sftp-up').addEventListener('click', () => {
   if (state.sftpPath === state.sftpRoot) return;
@@ -1122,26 +1188,41 @@ $('sftp-up').addEventListener('click', () => {
 $('sftp-upload').addEventListener('click', async () => {
   try {
     const result = await call(bridge.sftp.upload(state.activeSessionId, state.sftpPath));
-    if (!result.canceled) { $('sftp-progress-row').hidden = true; state.activeTransferId = null; setStatus('Upload hoàn tất.', 'ok'); await loadSftp(state.sftpPath); }
-  } catch (err) { showError('sftp-error', err.message); }
+    if (!result.canceled) {
+      $('sftp-progress-row').hidden = true;
+      state.activeTransferId = null;
+      setStatus('Upload hoàn tất.', 'ok');
+      await loadSftp(state.sftpPath);
+    }
+  } catch (err) {
+    showError('sftp-error', err.message);
+  }
 });
 $('sftp-mkdir').addEventListener('click', async () => {
   const name = window.prompt('Tên thư mục mới');
   if (!name) return;
-  try { await call(bridge.sftp.mkdir(state.activeSessionId, state.sftpPath, name)); await loadSftp(state.sftpPath); }
-  catch (err) { showError('sftp-error', err.message); }
+  try {
+    await call(bridge.sftp.mkdir(state.activeSessionId, state.sftpPath, name));
+    await loadSftp(state.sftpPath);
+  } catch (err) {
+    showError('sftp-error', err.message);
+  }
 });
 bridge.sftp.onProgress((progress) => {
   if (progress.sessionId !== state.activeSessionId) return;
   const percent = progress.total ? Math.round((progress.transferred / progress.total) * 100) : 0;
   state.activeTransferId = progress.transferId;
   $('sftp-progress-row').hidden = false;
-  $('sftp-progress').textContent = 'Đang truyền: ' + progress.transferred + '/' + progress.total + ' byte (' + percent + '%)';
+  $('sftp-progress').textContent =
+    'Đang truyền: ' + progress.transferred + '/' + progress.total + ' byte (' + percent + '%)';
 });
 $('sftp-cancel').addEventListener('click', async () => {
   if (!state.activeTransferId) return;
-  try { await call(bridge.sftp.cancel(state.activeTransferId)); }
-  catch (err) { showError('sftp-error', err.message); }
+  try {
+    await call(bridge.sftp.cancel(state.activeTransferId));
+  } catch (err) {
+    showError('sftp-error', err.message);
+  }
   state.activeTransferId = null;
   $('sftp-progress-row').hidden = true;
 });
@@ -1161,7 +1242,15 @@ async function renderTunnels() {
     row.className = 'row';
     const label = document.createElement('span');
     label.className = 'row-label';
-    label.textContent = '127.0.0.1:' + config.localPort + ' → ' + config.destinationHost + ':' + config.destinationPort;
+    if (config.type === 'dynamic') {
+      label.textContent = 'SOCKS5 127.0.0.1:' + config.localPort;
+    } else if (config.type === 'remote') {
+      label.textContent =
+        'R 127.0.0.1:' + config.remotePort + ' → local ' + config.destinationHost + ':' + config.destinationPort;
+    } else {
+      label.textContent =
+        'L 127.0.0.1:' + config.localPort + ' → remote ' + config.destinationHost + ':' + config.destinationPort;
+    }
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn btn-flat btn-sm';
@@ -1171,7 +1260,9 @@ async function renderTunnels() {
         if (activeById.has(config.id)) await call(bridge.tunnels.stop(config.id));
         else await call(bridge.tunnels.start(state.activeSessionId, config));
         await renderTunnels();
-      } catch (err) { showError('tunnel-error', err.message); }
+      } catch (err) {
+        showError('tunnel-error', err.message);
+      }
     });
     const remove = document.createElement('button');
     remove.type = 'button';
@@ -1202,25 +1293,44 @@ $('btn-session-log').addEventListener('click', async () => {
       ? await call(bridge.logs.stop(state.activeSessionId))
       : await call(bridge.logs.start(state.activeSessionId));
     if (changed) setStatus(active ? 'Đã dừng ghi log.' : 'Đang ghi log phiên.', 'ok');
-  } catch (err) { setStatus(err.message, 'error'); }
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+});
+$('t-type').addEventListener('change', () => {
+  const type = $('t-type').value;
+  $('t-port-label').textContent = type === 'remote' ? 'Remote port' : 'Local port';
+  $('t-dest-host-row').hidden = type === 'dynamic';
+  $('t-dest-port-row').hidden = type === 'dynamic';
+  $('t-dest-host').required = type !== 'dynamic';
+  $('t-dest-port').required = type !== 'dynamic';
 });
 $('tunnel-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const session = activeConnectedSession();
   if (!session) return;
-  const config = {
-    name: 'Local ' + $('t-local-port').value,
-    localPort: Number($('t-local-port').value),
-    destinationHost: $('t-dest-host').value,
-    destinationPort: Number($('t-dest-port').value),
-  };
+  const type = $('t-type').value;
+  const config = { type, name: type + ' ' + $('t-local-port').value };
+  if (type === 'remote') config.remotePort = Number($('t-local-port').value);
+  else config.localPort = Number($('t-local-port').value);
+  if (type !== 'dynamic') {
+    config.destinationHost = $('t-dest-host').value;
+    config.destinationPort = Number($('t-dest-port').value);
+  }
   try {
     const started = await call(bridge.tunnels.start(state.activeSessionId, config));
-    await call(bridge.connections.saveTunnel(session.connId, { ...config, id: started.id }));
+    await call(
+      bridge.connections.saveTunnel(session.connId, {
+        ...config,
+        id: started.id,
+      }),
+    );
     await refreshAll();
     await renderTunnels();
-    setStatus('Đã mở local tunnel.', 'ok');
-  } catch (err) { showError('tunnel-error', err.message); }
+    setStatus('Đã mở ' + (type === 'dynamic' ? 'SOCKS5 proxy.' : type + ' tunnel.'), 'ok');
+  } catch (err) {
+    showError('tunnel-error', err.message);
+  }
 });
 
 for (const button of document.querySelectorAll('[data-close]')) {

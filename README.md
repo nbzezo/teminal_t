@@ -16,30 +16,32 @@ không có cách khôi phục.**
 
 ## Chức năng
 
-| Việc cần làm | Cách làm |
-|---|---|
-| Thêm máy chủ | Nút **+ Kết nối** hoặc <kbd>Ctrl</kbd>+<kbd>N</kbd> |
-| Kết nối | Bấm vào máy trong danh sách bên trái |
-| Tìm và kết nối nhanh | <kbd>Ctrl</kbd>+<kbd>K</kbd>, gõ tên/host, <kbd>Enter</kbd> |
-| Lọc danh sách | Ô tìm kiếm ở cột trái (khớp tên, host, user, nhóm, ghi chú) |
-| Nhiều phiên cùng lúc | Mỗi lần kết nối mở một tab riêng; <kbd>Ctrl</kbd>+<kbd>Tab</kbd> để chuyển |
-| Đóng phiên | <kbd>Ctrl</kbd>+<kbd>W</kbd> hoặc dấu × trên tab |
-| Lệnh dùng nhiều | Lưu vào thanh **Lệnh nhanh** dưới đáy, bấm một phát là gửi vào phiên đang mở |
-| Lệnh chạy tự động | Điền ô *Lệnh chạy ngay khi kết nối* trong form máy chủ |
-| Lấy sẵn host có rồi | Nút **Nhập config** đọc `~/.ssh/config` |
-| Phân loại môi trường | Chọn Development/Staging/Production; Production luôn cảnh báo trước khi kết nối |
-| Sao chép cấu hình | Mở form sửa rồi chọn **Sao chép**; credential vẫn nằm trong vault mã hoá |
+| Việc cần làm            | Cách làm                                                                                                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Thêm máy chủ            | Nút **+ Kết nối** hoặc <kbd>Ctrl</kbd>+<kbd>N</kbd>                                                                    |
+| Kết nối                 | Bấm vào máy trong danh sách bên trái                                                                                   |
+| Tìm và kết nối nhanh    | <kbd>Ctrl</kbd>+<kbd>K</kbd>, gõ tên/host, <kbd>Enter</kbd>                                                            |
+| Lọc danh sách           | Ô tìm kiếm ở cột trái (khớp tên, host, user, nhóm, ghi chú)                                                            |
+| Nhiều phiên cùng lúc    | Mỗi lần kết nối mở một tab riêng; <kbd>Ctrl</kbd>+<kbd>Tab</kbd> để chuyển                                             |
+| Đóng phiên              | <kbd>Ctrl</kbd>+<kbd>W</kbd> hoặc dấu × trên tab                                                                       |
+| Lệnh dùng nhiều         | Lưu/tìm theo tên, nhóm hoặc nội dung ở thanh **Lệnh nhanh**; hỗ trợ biến `${name}` và điền trước khi gửi               |
+| Lệnh chạy tự động       | Điền ô _Lệnh chạy ngay khi kết nối_ trong form máy chủ                                                                 |
+| Lấy sẵn host có rồi     | Nút **Nhập config** đọc `~/.ssh/config`                                                                                |
+| Phân loại môi trường    | Chọn Development/Staging/Production; Production luôn cảnh báo trước khi kết nối                                        |
+| Sao chép cấu hình       | Mở form sửa rồi chọn **Sao chép**; credential vẫn nằm trong vault mã hoá                                               |
 | Sao chép trong terminal | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> (như GNOME Terminal — <kbd>Ctrl</kbd>+<kbd>C</kbd> vẫn là tín hiệu ngắt) |
-| Dán vào terminal | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> |
-| Tìm trong terminal | <kbd>Ctrl</kbd>+<kbd>F</kbd> |
-| Khoá kho | <kbd>Ctrl</kbd>+<kbd>L</kbd> — ngắt hết phiên và xoá khoá khỏi RAM |
-| Đổi master password | Nút ⚙ trên thanh tiêu đề |
-| Backup/khôi phục | ⚙ → **Backup mã hoá**; credential không được xuất mặc định |
-| Quản lý host key | ⚙ → **Host key đã tin cậy** để xem fingerprint hoặc quên một mục |
-| Quản lý file SFTP | Kết nối SSH rồi chọn nút **⇄**: duyệt, upload/download, tạo thư mục, đổi tên, chmod và xoá có xác nhận |
-| Local port forwarding | Kết nối SSH rồi chọn nút **↔**; tunnel chỉ bind `127.0.0.1` và tự đóng theo phiên |
-| Ghi log phiên | Chọn nút **●** trong phiên; luôn có cảnh báo dữ liệu nhạy cảm và mặc định tắt |
-| Tự kết nối lại | Bật trong cấu hình máy chủ; retry 1/2/4 giây, tối đa 3 lần và không chạy lại `onConnect` |
+| Dán vào terminal        | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>                                                                          |
+| Tìm trong terminal      | <kbd>Ctrl</kbd>+<kbd>F</kbd>                                                                                           |
+| Khoá kho                | <kbd>Ctrl</kbd>+<kbd>L</kbd> — ngắt hết phiên và xoá khoá khỏi RAM                                                     |
+| Đổi master password     | Nút ⚙ trên thanh tiêu đề                                                                                               |
+| Backup/khôi phục        | ⚙ → **Backup mã hoá**; credential không được xuất mặc định                                                             |
+| Quản lý host key        | ⚙ → **Host key đã tin cậy** để xem fingerprint hoặc quên một mục                                                       |
+| Quản lý file SFTP       | Kết nối SSH rồi chọn nút **⇄**: duyệt, upload/download, tạo thư mục, đổi tên, chmod và xoá có xác nhận                 |
+| Port forwarding         | Nút **↔** hỗ trợ Local, Remote và SOCKS5 Dynamic; đều bind loopback và tự đóng theo phiên                              |
+| Jump host               | Chọn một cấu hình đã lưu trong ô **Jump host**; mỗi hop xác minh host key độc lập                                      |
+| Ghi log phiên           | Chọn nút **●** trong phiên; luôn có cảnh báo dữ liệu nhạy cảm và mặc định tắt                                          |
+| Tự kết nối lại          | Bật trong cấu hình máy chủ; retry 1/2/4 giây, tối đa 3 lần và không chạy lại `onConnect`                               |
+| Tuỳ chỉnh terminal      | ⚙ → chọn font, cỡ chữ và màu nền; áp dụng ngay cho các tab đang mở                                                     |
 
 Máy chủ được xếp theo nhóm, trong mỗi nhóm ưu tiên máy vừa dùng gần nhất.
 
@@ -108,7 +110,7 @@ Khi sửa một máy chủ, để trống ô mật khẩu/passphrase nghĩa là 
   thời ngắt toàn bộ phiên và xoá khoá khỏi RAM.
 - Clipboard có thể tự xoá sau 0–300 giây và chỉ bị xoá nếu nội dung chưa bị người dùng thay đổi.
 - SFTP canonicalize đường dẫn POSIX trong `SFTP root`, chặn traversal, ghi file qua tên tạm và
-  khôi phục bản cũ nếu replace thất bại. Local tunnel chỉ lắng nghe trên loopback.
+  khôi phục bản cũ nếu replace thất bại. Local/SOCKS listener và remote forward đều chỉ bind loopback.
 
 ### Backup
 
@@ -128,19 +130,19 @@ npm test
 
 Các phép kiểm tra được chia theo các tầng sau:
 
-| Lệnh | Kiểm cái gì |
-|---|---|
-| `npm run test:platform` | Adapter Windows/Linux: home path, Unicode, separator và SSH agent |
-| `npm run test:vault` | Mã hoá, đọc/ghi kho, đổi master password, chống rò bí mật ra đĩa |
-| `npm run test:security` | Validation, che lỗi, phát hiện lệnh nguy hiểm, migration và backup mã hoá |
-| `npm run test:import` | Bộ đọc `~/.ssh/config`: wildcard, thiếu trường, nhập trùng |
-| `npm run test:utf8` | Tiếng Việt qua đường SSH, kể cả khi gói tin bị cắt từng byte một |
-| `npm run test:ssh` | Dựng SSH server thật trên `127.0.0.1`: password, key thường/key có passphrase, PTY, resize và host key đổi |
-| `npm run test:sftp` | Canonical path, traversal guard, CRUD, chmod, upload/download và progress |
-| `npm run test:tunnel` | Forward TCP, port conflict, stop và teardown theo phiên SSH |
-| `npm run test:ui` | Chạy Electron thật, điều khiển giao diện: tạo kho, thêm máy chủ, tìm kiếm, bảng Ctrl+K, lệnh nhanh, khoá/mở lại |
-| `npm run test:ime` | Bộ gõ tiếng Việt: phím trong lúc soạn thảo, tìm không dấu, dữ liệu sống sót qua vòng khoá/mở |
-| `npm run test:theme` | Khoá các giá trị Ubuntu: accent cam, bảng Tango, nền tím cà, chữ Ubuntu Sans có glyph tiếng Việt, số đo libadwaita — chạy cả chế độ sáng lẫn tối |
+| Lệnh                    | Kiểm cái gì                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run test:platform` | Adapter Windows/Linux: home path, Unicode, separator và SSH agent                                                                                |
+| `npm run test:vault`    | Mã hoá, đọc/ghi kho, đổi master password, chống rò bí mật ra đĩa                                                                                 |
+| `npm run test:security` | Validation, che lỗi, phát hiện lệnh nguy hiểm, migration và backup mã hoá                                                                        |
+| `npm run test:import`   | Bộ đọc `~/.ssh/config`: wildcard, thiếu trường, nhập trùng                                                                                       |
+| `npm run test:utf8`     | Tiếng Việt qua đường SSH, kể cả khi gói tin bị cắt từng byte một                                                                                 |
+| `npm run test:ssh`      | Dựng SSH server thật trên `127.0.0.1`: password, key thường/key có passphrase, PTY, resize và host key đổi                                       |
+| `npm run test:sftp`     | Canonical path, traversal guard, CRUD, chmod, upload/download và progress                                                                        |
+| `npm run test:tunnel`   | Forward TCP, port conflict, stop và teardown theo phiên SSH                                                                                      |
+| `npm run test:ui`       | Chạy Electron thật, điều khiển giao diện: tạo kho, thêm máy chủ, tìm kiếm, bảng Ctrl+K, lệnh nhanh, khoá/mở lại                                  |
+| `npm run test:ime`      | Bộ gõ tiếng Việt: phím trong lúc soạn thảo, tìm không dấu, dữ liệu sống sót qua vòng khoá/mở                                                     |
+| `npm run test:theme`    | Khoá các giá trị Ubuntu: accent cam, bảng Tango, nền tím cà, chữ Ubuntu Sans có glyph tiếng Việt, số đo libadwaita — chạy cả chế độ sáng lẫn tối |
 
 Test dùng thư mục dữ liệu tạm, không đụng tới kho thật của bạn.
 

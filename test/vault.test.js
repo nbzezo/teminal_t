@@ -85,6 +85,31 @@ function ok(label) {
   assert.strictEqual(vault.getConnectionFull(keyConn.id).passphrase, 'pp');
   ok('kết nối dùng key không giữ trường mật khẩu');
 
+  vault.saveConnection({
+    id: saved.id,
+    name: 'Web prod v2',
+    host: '10.0.0.5',
+    username: 'deploy',
+    authType: 'password',
+    password: '',
+    jumpHostId: keyConn.id,
+  });
+  vault.saveTunnel(saved.id, { type: 'dynamic', name: 'SOCKS', localPort: 1080 });
+  vault.saveTunnel(saved.id, {
+    type: 'remote',
+    name: 'Remote API',
+    remotePort: 9000,
+    destinationHost: '127.0.0.1',
+    destinationPort: 3000,
+  });
+  const tunnelConnection = vault.getConnectionFull(saved.id);
+  assert.strictEqual(tunnelConnection.jumpHostId, keyConn.id);
+  assert.deepStrictEqual(
+    tunnelConnection.tunnels.map((tunnel) => tunnel.type),
+    ['dynamic', 'remote']
+  );
+  ok('vault schema v4 lưu jump host và nhiều loại tunnel');
+
   // --- snippets ---
   vault.saveSnippet({ name: 'Xem log', command: 'tail -f /var/log/syslog' });
   assert.strictEqual(vault.listSnippets().length, 1);
@@ -95,8 +120,15 @@ function ok(label) {
   assert.strictEqual(vault.getConnectionFull(saved.id).useCount, 1);
   ok('touchConnection tăng bộ đếm lần dùng');
 
-  vault.saveSettings({ autoLockMinutes: 30 });
+  vault.saveSettings({
+    autoLockMinutes: 30,
+    terminalFontFamily: 'consolas',
+    terminalFontSize: 16,
+    terminalBackground: '#112233',
+  });
   assert.strictEqual(vault.getSettings().autoLockMinutes, 30);
+  assert.strictEqual(vault.getSettings().terminalFontSize, 16);
+  assert.strictEqual(vault.getSettings().terminalBackground, '#112233');
   assert.throws(() => vault.saveSettings({ autoLockMinutes: 0 }), /1 đến 240/);
   ok('cấu hình tự khoá được validate và lưu trong vault');
 
