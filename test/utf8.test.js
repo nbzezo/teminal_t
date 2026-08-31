@@ -137,6 +137,6 @@ const server = new Server({ hostKeys: [fs.readFileSync(hostKeyPath)] }, (client)
 })().catch((err) => {
   console.error('\nNGOAI LE: ' + err.message);
   console.error(err.stack);
-  try { server.close(); fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  try { server.close(); fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* thu muc tam co the da bi xoa */ }
   process.exit(1);
 });

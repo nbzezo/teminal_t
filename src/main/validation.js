@@ -24,10 +24,16 @@ function validateHost(value) {
   return unwrapped.toLowerCase();
 }
 
-function validatePort(value) {
+/**
+ * @param {unknown} value
+ * @param {{allowZero?: boolean}} [options] cổng 0 nghĩa là "để hệ điều hành tự
+ *   cấp", hợp lệ với tunnel nhưng không hợp lệ với địa chỉ máy chủ.
+ */
+function validatePort(value, { allowZero = false } = {}) {
   const port = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('Port phải là số nguyên từ 1 đến 65535');
+  const min = allowZero ? 0 : 1;
+  if (!Number.isInteger(port) || port < min || port > 65535) {
+    throw new Error('Port phải là số nguyên từ ' + min + ' đến 65535');
   }
   return port;
 }

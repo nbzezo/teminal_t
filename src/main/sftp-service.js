@@ -137,9 +137,9 @@ class SftpService {
       if (backup) await unlink(backup);
       return result;
     } catch (err) {
-      try { await unlink(temporary); } catch {}
+      try { await unlink(temporary); } catch { /* file tam co the chua kip tao */ }
       if (backup) {
-        try { await rename(backup, target); } catch {}
+        try { await rename(backup, target); } catch { /* khong khoi phuc duoc thi giu nguyen ban backup */ }
       }
       throw err;
     }
@@ -172,7 +172,7 @@ class SftpService {
       }
       return result;
     } catch (err) {
-      try { fs.unlinkSync(tmp); } catch {}
+      try { fs.unlinkSync(tmp); } catch { /* file tam co the chua ton tai */ }
       throw err;
     }
   }
@@ -195,7 +195,13 @@ class SftpService {
       });
       source.on('error', finish);
       destination.on('error', finish);
-      destination.on('finish', () => finish());
+      // 'finish' chỉ nói dữ liệu đã được đẩy đi, file descriptor có thể còn mở.
+      // Trên Windows, rename một file đang mở trả EPERM — nên phải đợi 'close'.
+      destination.on('close', () => finish());
+      destination.on('finish', () => {
+        const fallback = setTimeout(() => finish(), 1000);
+        if (typeof fallback.unref === 'function') fallback.unref();
+      });
       this.transfers.set(transferId, { sessionId, source, destination });
       source.pipe(destination);
     });

@@ -47,6 +47,21 @@ app.whenReady().then(async () => {
     await wait(600);
     const run = (code) => win.webContents.executeJavaScript(code, true);
 
+    // --- 0. window.prompt() không tồn tại trong Electron ---
+    // Năm tính năng từng chết im lặng vì gọi nó. Chặn ở cả hai đầu: xác nhận
+    // Electron thật sự ném lỗi, và không còn chỗ nào trong renderer gọi tới.
+    const promptSupport = await run(
+      `(() => { try { window.prompt('a','b'); return 'HO_TRO'; } catch (e) { return 'NEM_LOI'; } })()`
+    );
+    check('Electron vẫn không hỗ trợ window.prompt', promptSupport === 'NEM_LOI', promptSupport);
+
+    const rendererDir = path.join(__dirname, '..', 'src', 'renderer');
+    const promptCallers = fs
+      .readdirSync(rendererDir)
+      .filter((name) => name.endsWith('.js'))
+      .filter((name) => /(?:^|[^.\w])prompt\s*\(/.test(fs.readFileSync(path.join(rendererDir, name), 'utf8')));
+    check('không module renderer nào còn gọi prompt()', promptCallers.length === 0, promptCallers);
+
     // --- 1. Cầu nối preload và thư viện terminal ---
     const env = await run(`({
       api: typeof window.api,
@@ -133,6 +148,7 @@ app.whenReady().then(async () => {
       const terminal = new Terminal();
       terminal.open(host);
       const sent = [];
+      const { wireTerminalInput } = await import('./sessions.js');
       wireTerminalInput(terminal, (data) => sent.push(data));
       const keydown = new KeyboardEvent('keydown', {key:'Process', code:'KeyD', bubbles:true});
       Object.defineProperty(keydown, 'keyCode', {value: 229});
@@ -235,6 +251,45 @@ app.whenReady().then(async () => {
     check('hiện đúng user@host:port', added.subs.some(s => s.includes('deploy@example.internal:2222')), added.subs);
     check('gom nhóm theo trường Nhóm', added.groups.includes('Staging'), added.groups);
 
+    // --- 5b. Hộp nhập liệu thay cho window.prompt ---
+    await run(`(async () => {
+      const core = await import('./core.js');
+      window.__ask = core.askInput({ title: 'Thử nhập', label: 'Giá trị cho \${TARGET}', value: 'cu' });
+      return true;
+    })()`);
+    await wait(300);
+    const askOpen = await run(`({
+      open: !document.getElementById('input-modal').hidden,
+      label: document.getElementById('input-label').textContent,
+      value: document.getElementById('input-field').value,
+      focused: document.activeElement && document.activeElement.id
+    })`);
+    check(
+      'askInput mở hộp thoại có nhãn, giá trị sẵn và focus đúng ô nhập',
+      askOpen.open && askOpen.label.includes('TARGET') && askOpen.value === 'cu' && askOpen.focused === 'input-field',
+      askOpen,
+    );
+
+    await run(`(() => {
+      document.getElementById('input-field').value = 'Đường dẫn Tiếng Việt';
+      document.getElementById('input-form').requestSubmit();
+    })()`);
+    await wait(250);
+    const askResult = await run(`window.__ask`);
+    check('askInput trả về đúng chuỗi Unicode người dùng nhập', askResult === 'Đường dẫn Tiếng Việt', askResult);
+    check('gửi xong thì hộp nhập liệu đóng lại', await run(`document.getElementById('input-modal').hidden`));
+
+    await run(`(async () => {
+      const core = await import('./core.js');
+      window.__askCancel = core.askInput({ title: 'Huỷ thử', label: 'Giá trị' });
+      return true;
+    })()`);
+    await wait(250);
+    await run(`document.getElementById('input-cancel').click()`);
+    await wait(200);
+    const cancelled = await run(`window.__askCancel`);
+    check('bấm Huỷ thì askInput trả null chứ không treo', cancelled === null, cancelled);
+
     // --- 6. Form báo lỗi khi thiếu host ---
     await run(`(() => {
       document.getElementById('btn-new').click();
@@ -298,7 +353,7 @@ app.whenReady().then(async () => {
     check('lưu được lệnh nhanh và hiện thành chip', snippets.closed && snippets.chips.some(c => c.includes('Xem tiến trình')), snippets);
 
     // --- 10. Bấm lệnh nhanh khi chưa có phiên ---
-    await run(`document.querySelector('.snippet-chip span').click()`);
+    await run(`document.querySelector('.snippet-chip .chip-name').click()`);
     await wait(200);
     const noSession = await run(`document.getElementById('status-text').textContent`);
     check('gửi lệnh khi chưa có phiên thì báo lỗi rõ ràng', noSession.includes('Chưa có phiên'), noSession);
@@ -350,6 +405,22 @@ app.whenReady().then(async () => {
     check('mở phiên tạo ra tab và khung terminal', session.tabs === 1 && session.emptyHidden && session.hasTermCanvas, session);
     check('host không tồn tại thì báo lỗi trên statusbar', /không|thất bại|ENOTFOUND|getaddrinfo|timed out|Error/i.test(session.status), session.status);
 
+    // --- 13b. Thanh tìm trong terminal (thay cho prompt đã hỏng) ---
+    await run(`document.dispatchEvent(new KeyboardEvent('keydown', {key:'f', ctrlKey:true, bubbles:true}))`);
+    await wait(300);
+    const searchBar = await run(`({
+      open: !document.getElementById('terminal-search').hidden,
+      focused: document.activeElement && document.activeElement.id
+    })`);
+    check(
+      'Ctrl+F mở thanh tìm trong terminal và focus ô nhập',
+      searchBar.open && searchBar.focused === 'term-search-input',
+      searchBar,
+    );
+    await run(`document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+    await wait(250);
+    check('Escape đóng thanh tìm trong terminal', await run(`document.getElementById('terminal-search').hidden`));
+
     await run(`document.querySelector('.tab-close').click()`);
     await wait(400);
     const closed = await run(`({
@@ -390,7 +461,7 @@ app.whenReady().then(async () => {
   } finally {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {}
+    } catch { /* thu muc tam co the da bi xoa */ }
     app.exit(failed === 0 ? 0 : 1);
   }
 });

@@ -106,6 +106,6 @@ const service = new SftpService(manager);
   console.log('\n' + passed + '/' + passed + ' phép kiểm tra đã qua.');
 })().catch((err) => {
   console.error('\nTHAT BAI: ' + err.stack);
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* thu muc tam co the da bi xoa */ }
   process.exit(1);
 });

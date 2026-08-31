@@ -2,12 +2,16 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme, clipboard, screen } = require('electron');
 const { Vault } = require('./vault');
 const { SshManager, KnownHosts, detectAgent } = require('./ssh-manager');
 const { currentPlatform } = require('./platform');
 const { inspectCommand, safeErrorMessage, validateId, clampTerminalSize } = require('./validation');
 const { SftpService } = require('./sftp-service');
+const { DiagnosticLog } = require('./diagnostics');
+const { readWindowState, writeWindowState, captureWindowState } = require('./window-state');
+const { SessionLogs } = require('./session-logs');
+const { OutputPump } = require('./output-pump');
 
 const isDev = process.argv.includes('--dev');
 
@@ -15,20 +19,52 @@ let mainWindow = null;
 let vault = null;
 let ssh = null;
 let sftp = null;
-const sessionLogs = new Map();
+let diagnostics = null;
+let windowStatePath = null;
+let quitConfirmed = false;
+let windowStateTimer = null;
 
-function stopSessionLog(sessionId) {
-  const stream = sessionLogs.get(sessionId);
-  if (!stream) return false;
-  sessionLogs.delete(sessionId);
-  stream.end();
-  return true;
+let sessionLogs = null;
+const pumps = new Map();
+
+function disposePump(sessionId) {
+  const pump = pumps.get(sessionId);
+  if (!pump) return;
+  pumps.delete(sessionId);
+  pump.dispose();
+}
+
+/* =========================================================================
+ * Cửa sổ
+ * ========================================================================= */
+
+function notify(message, kind = 'error') {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:notice', { message, kind });
+}
+
+function scheduleWindowStateSave() {
+  clearTimeout(windowStateTimer);
+  windowStateTimer = setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      writeWindowState(windowStatePath, captureWindowState(mainWindow));
+    }
+  }, 500);
 }
 
 function createWindow() {
+  const displays = (() => {
+    try {
+      return screen.getAllDisplays();
+    } catch {
+      return [];
+    }
+  })();
+  const saved = readWindowState(windowStatePath, displays);
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: saved.width,
+    height: saved.height,
+    ...(Number.isInteger(saved.x) && Number.isInteger(saved.y) ? { x: saved.x, y: saved.y } : {}),
     minWidth: 900,
     minHeight: 560,
     // Không dùng khung của hệ điều hành: thanh tiêu đề do trang tự vẽ theo
@@ -47,6 +83,7 @@ function createWindow() {
     },
   });
 
+  if (saved.maximized) mainWindow.maximize();
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
   if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -65,9 +102,48 @@ function createWindow() {
         maximized: mainWindow.isMaximized(),
       });
     }
+    scheduleWindowStateSave();
   };
   mainWindow.on('maximize', sendWindowState);
   mainWindow.on('unmaximize', sendWindowState);
+  mainWindow.on('resize', scheduleWindowStateSave);
+  mainWindow.on('move', scheduleWindowStateSave);
+
+  // Đóng cửa sổ khi còn phiên đang chạy là mất hết việc đang làm, kể cả lệnh
+  // chạy dở — nên phải hỏi, trừ khi người dùng tự tắt xác nhận trong cài đặt.
+  mainWindow.on('close', (event) => {
+    writeWindowState(windowStatePath, captureWindowState(mainWindow));
+    if (quitConfirmed) return;
+    const liveSessions = ssh ? ssh.sessions.size : 0;
+    if (liveSessions === 0 || !vault || !vault.unlocked) return;
+    let confirmOnExit = true;
+    try {
+      confirmOnExit = vault.getSettings().confirmOnExit !== false;
+    } catch {
+      confirmOnExit = true;
+    }
+    if (!confirmOnExit) return;
+
+    event.preventDefault();
+    dialog
+      .showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'Còn phiên SSH đang mở',
+        message:
+          liveSessions === 1 ? 'Còn 1 phiên SSH đang mở' : 'Còn ' + liveSessions + ' phiên SSH đang mở',
+        detail: 'Thoát bây giờ sẽ ngắt hết, kể cả lệnh đang chạy dở.',
+        buttons: ['Ở lại', 'Thoát và ngắt kết nối'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        if (response !== 1) return;
+        quitConfirmed = true;
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+      })
+      .catch(() => {});
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -123,11 +199,71 @@ function handle(channel, fn) {
       if (!mainWindow || event.sender !== mainWindow.webContents) {
         throw new Error('Nguồn IPC không được phép');
       }
+      noteActivity();
       return { ok: true, data: await fn(...args) };
     } catch (err) {
+      if (diagnostics) diagnostics.write(channel, err);
       return { ok: false, error: safeErrorMessage(err) };
     }
   });
+}
+
+/* =========================================================================
+ * Tự khoá kho
+ * ========================================================================= */
+
+let lastActivityAt = Date.now();
+let autoLockTimer = null;
+
+function noteActivity() {
+  lastActivityAt = Date.now();
+}
+
+/**
+ * Đồng hồ tự khoá nằm ở main process chứ không chỉ ở renderer: nếu trang treo
+ * hoặc bị dừng, kho vẫn phải khoá đúng hạn.
+ */
+function startAutoLockWatch() {
+  clearInterval(autoLockTimer);
+  autoLockTimer = setInterval(() => {
+    if (!vault || !vault.unlocked) return;
+    let minutes = 15;
+    try {
+      minutes = Number(vault.getSettings().autoLockMinutes) || 15;
+    } catch {
+      minutes = 15;
+    }
+    if (Date.now() - lastActivityAt < minutes * 60 * 1000) return;
+    lockVault();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('vault:locked');
+  }, 15000);
+}
+
+function lockVault() {
+  sessionLogs.stopAll();
+  for (const sessionId of [...pumps.keys()]) disposePump(sessionId);
+  ssh.disconnectAll();
+  return vault.lock();
+}
+
+function applyTheme(theme) {
+  if (['system', 'light', 'dark'].includes(theme)) nativeTheme.themeSource = theme;
+}
+
+/* =========================================================================
+ * IPC
+ * ========================================================================= */
+
+// Phiên đang chờ người dùng xác nhận trong hộp thoại, và những phiên đã bị đóng
+// trước khi kịp kết nối. Không có sổ này, đóng tab lúc hộp thoại còn mở sẽ để
+// lại một kết nối SSH sống mà giao diện không còn cách nào chạm tới.
+const pendingOpens = new Set();
+const cancelledOpens = new Set();
+
+function abortIfCancelled(sessionId) {
+  if (!cancelledOpens.delete(sessionId)) return false;
+  pendingOpens.delete(sessionId);
+  return true;
 }
 
 function registerIpc() {
@@ -147,13 +283,46 @@ function registerIpc() {
     }
     return copy;
   };
+
+  /** Bộ handler chung cho cả mở mới, mở lại và tách pane. */
+  const sessionHandlers = (sessionId) => {
+    disposePump(sessionId);
+    const send = (channel, payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(channel, sessionId, payload);
+      }
+    };
+    const pump = new OutputPump(
+      (chunk) => send('ssh:data', chunk),
+      (paused) => ssh.setFlow(sessionId, paused),
+    );
+    pumps.set(sessionId, pump);
+    return {
+      onData: (data) => {
+        pump.push(data);
+        sessionLogs.write(sessionId, data);
+      },
+      onStatus: (status) => send('ssh:status', status),
+      onClose: () => {
+        disposePump(sessionId);
+        sessionLogs.stop(sessionId);
+        send('ssh:status', { state: 'gone' });
+      },
+    };
+  };
+
   handle('app:info', () => ({
     version: app.getVersion(),
     vaultPath: vault.filePath,
+    diagnosticPath: diagnostics.filePath,
     agent: detectAgent(),
     platform: currentPlatform.id,
     platformLabel: currentPlatform.label,
   }));
+  handle('app:setTheme', (theme) => {
+    applyTheme(String(theme));
+    return nativeTheme.themeSource;
+  });
 
   handle('clipboard:readText', async () => {
     if (!mainWindow || !mainWindow.isFocused()) throw new Error('Chỉ được paste khi ứng dụng đang được focus');
@@ -174,16 +343,32 @@ function registerIpc() {
   });
 
   handle('vault:status', () => vault.status());
-  handle('vault:init', (password) => vault.init(password));
-  handle('vault:unlock', (password) => vault.unlock(password));
-  handle('vault:lock', () => {
-    ssh.disconnectAll();
-    return vault.lock();
+  handle('vault:init', async (password) => {
+    const status = await vault.init(password);
+    diagnostics.setEnabled(vault.getSettings().diagnosticLog);
+    return status;
   });
+  handle('vault:unlock', async (password) => {
+    const status = await vault.unlock(password);
+    const settings = vault.getSettings();
+    diagnostics.setEnabled(settings.diagnosticLog);
+    // Chỉ ép themeSource khi người dùng đã chọn cụ thể; 'system' nghĩa là không
+    // đụng vào, để Electron giữ nguyên hành vi theo hệ điều hành.
+    if (settings.theme !== 'system') applyTheme(settings.theme);
+    return status;
+  });
+  handle('vault:lock', () => lockVault());
   handle('vault:changePassword', (oldPw, newPw) => vault.changeMasterPassword(oldPw, newPw));
   handle('vault:importSshConfig', () => vault.importSshConfig());
   handle('vault:settings', () => vault.getSettings());
-  handle('vault:saveSettings', (settings) => vault.saveSettings(settings));
+  handle('vault:saveSettings', (settings) => {
+    const saved = vault.saveSettings(settings);
+    diagnostics.setEnabled(saved.diagnosticLog);
+    applyTheme(saved.theme);
+    return saved;
+  });
+  handle('vault:workspace', () => vault.getWorkspace());
+  handle('vault:saveWorkspace', (workspace) => vault.saveWorkspace(workspace));
   handle('vault:exportBackup', async (password, options) => {
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Xuất backup SSH Manager đã mã hoá',
@@ -212,6 +397,7 @@ function registerIpc() {
 
   handle('conn:list', () => vault.listConnections());
   handle('conn:save', (conn) => vault.saveConnection(conn));
+  handle('conn:jumpUsers', (id) => vault.connectionsUsingJumpHost(id).map((conn) => conn.name));
   handle('conn:delete', (id) => vault.deleteConnection(id));
   handle('conn:duplicate', (id) => vault.duplicateConnection(id));
   handle('conn:saveTunnel', (connectionId, tunnel) => vault.saveTunnel(connectionId, tunnel));
@@ -225,85 +411,73 @@ function registerIpc() {
     validateId(sessionId, 'Session ID');
     validateId(connectionId, 'Connection ID');
     const conn = connectionForSsh(connectionId);
+    pendingOpens.add(sessionId);
 
-    if (conn.environment === 'production') {
-      const { response } = await dialog.showMessageBox(mainWindow, {
-        type: 'warning',
-        title: 'Xác nhận kết nối Production',
-        message: 'Bạn sắp kết nối tới môi trường Production',
-        detail: conn.name + '\n' + conn.username + '@' + conn.host + ':' + conn.port,
-        buttons: ['Huỷ kết nối', 'Tiếp tục'],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
-      if (response !== 1) throw new Error('Đã huỷ kết nối Production');
-    }
-
-    if (conn.onConnect && conn.onConnect.trim()) {
-      const inspected = inspectCommand(conn.onConnect);
-      const { response } = await dialog.showMessageBox(mainWindow, {
-        type: inspected.dangerous ? 'warning' : 'question',
-        title: inspected.dangerous ? 'Lệnh có rủi ro cao' : 'Xác nhận lệnh khi kết nối',
-        message: 'Lệnh sau sẽ được gửi sau khi SSH kết nối thành công:',
-        detail: inspected.command,
-        buttons: ['Huỷ kết nối', 'Kết nối và chạy lệnh'],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
-      if (response !== 1) throw new Error('Đã huỷ lệnh tự động');
-    }
-
-    const send = (channel, payload) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(channel, sessionId, payload);
+    try {
+      if (conn.environment === 'production') {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          title: 'Xác nhận kết nối Production',
+          message: 'Bạn sắp kết nối tới môi trường Production',
+          detail: conn.name + '\n' + conn.username + '@' + conn.host + ':' + conn.port,
+          buttons: ['Huỷ kết nối', 'Tiếp tục'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (response !== 1) throw new Error('Đã huỷ kết nối Production');
       }
-    };
+      if (abortIfCancelled(sessionId)) throw new Error('Phiên đã được đóng trước khi kết nối');
+
+      if (conn.onConnect && conn.onConnect.trim()) {
+        const inspected = inspectCommand(conn.onConnect);
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: inspected.dangerous ? 'warning' : 'question',
+          title: inspected.dangerous ? 'Lệnh có rủi ro cao' : 'Xác nhận lệnh khi kết nối',
+          message: 'Lệnh sau sẽ được gửi sau khi SSH kết nối thành công:',
+          detail: inspected.command,
+          buttons: ['Huỷ kết nối', 'Kết nối và chạy lệnh'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (response !== 1) throw new Error('Đã huỷ lệnh tự động');
+      }
+      if (abortIfCancelled(sessionId)) throw new Error('Phiên đã được đóng trước khi kết nối');
+    } finally {
+      pendingOpens.delete(sessionId);
+      cancelledOpens.delete(sessionId);
+    }
 
     // Bản sao để SshManager có thể xoá bí mật khỏi RAM mà không đụng vault
-    ssh.connect(sessionId, { ...conn }, clampTerminalSize(size), {
-      onData: (data) => {
-        send('ssh:data', data);
-        const log = sessionLogs.get(sessionId);
-        if (log) log.write(data);
-      },
-      onStatus: (status) => send('ssh:status', status),
-      onClose: () => {
-        stopSessionLog(sessionId);
-        send('ssh:status', { state: 'gone' });
-      },
-    });
+    ssh.connect(sessionId, { ...conn }, clampTerminalSize(size), sessionHandlers(sessionId));
     vault.touchConnection(connectionId);
     return { sessionId };
   });
 
   handle('ssh:close', (sessionId) => {
+    if (pendingOpens.has(sessionId)) cancelledOpens.add(sessionId);
+    disposePump(sessionId);
+    sessionLogs.stop(sessionId);
     ssh.disconnect(sessionId);
     return true;
   });
   handle('ssh:metrics', (sessionId) => ssh.probeMetrics(sessionId));
 
+  handle('ssh:split', (sessionId, sourceSessionId, size) => {
+    validateId(sessionId, 'Session ID');
+    validateId(sourceSessionId, 'Session ID');
+    return ssh.openShell(sessionId, sourceSessionId, clampTerminalSize(size), sessionHandlers(sessionId));
+  });
+
   handle('ssh:reconnect', (sessionId, connectionId, size) => {
     validateId(sessionId, 'Session ID');
     validateId(connectionId, 'Connection ID');
     const conn = connectionForSsh(connectionId, { clearOnConnect: true });
+    // Chỉ dùng cho retry tự động. Kết nối lại do người dùng bấm đi qua `ssh:open`
+    // để cảnh báo Production và xác nhận lệnh tự động vẫn được hiện đầy đủ.
     if (!conn || !conn.autoReconnect) throw new Error('Kết nối lại tự động chưa được bật');
-    const send = (channel, payload) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, sessionId, payload);
-    };
-    ssh.connect(sessionId, conn, clampTerminalSize(size), {
-      onData: (data) => {
-        send('ssh:data', data);
-        const log = sessionLogs.get(sessionId);
-        if (log) log.write(data);
-      },
-      onStatus: (status) => send('ssh:status', status),
-      onClose: () => {
-        stopSessionLog(sessionId);
-        send('ssh:status', { state: 'gone' });
-      },
-    });
+    ssh.connect(sessionId, conn, clampTerminalSize(size), sessionHandlers(sessionId));
     return { sessionId, reconnect: true };
   });
 
@@ -312,6 +486,7 @@ function registerIpc() {
     try {
       validateId(sessionId, 'Session ID');
       if (typeof data !== 'string' || data.length > 1024 * 1024) return;
+      noteActivity();
       ssh.write(sessionId, data);
     } catch {
       // Bỏ qua IPC không hợp lệ; không phản chiếu dữ liệu nhạy cảm về renderer.
@@ -326,6 +501,15 @@ function registerIpc() {
     } catch {
       // Bỏ qua IPC không hợp lệ.
     }
+  });
+  ipcMain.on('ssh:ack', (event, sessionId, bytes) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    const pump = pumps.get(sessionId);
+    if (pump) pump.ack(bytes);
+  });
+  ipcMain.on('vault:activity', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    noteActivity();
   });
 
   handle('knownHosts:list', () => ssh.knownHosts.list());
@@ -352,13 +536,7 @@ function registerIpc() {
     if (response !== 1) return false;
     return sftp.remove(sessionId, remotePath, isDirectory);
   });
-  handle('sftp:upload', async (sessionId, remoteDirectory) => {
-    const picked = await dialog.showOpenDialog(mainWindow, {
-      title: 'Chọn file để upload',
-      properties: ['openFile'],
-    });
-    if (picked.canceled || !picked.filePaths[0]) return { canceled: true };
-    const localPath = picked.filePaths[0];
+  const uploadOne = async (sessionId, remoteDirectory, localPath) => {
     const remotePath = path.posix.join(String(remoteDirectory), path.basename(localPath));
     const existing = await sftp.stat(sessionId, remotePath);
     let overwrite = false;
@@ -373,17 +551,29 @@ function registerIpc() {
         cancelId: 0,
         noLink: true,
       });
-      if (response !== 1) return { canceled: true };
+      if (response !== 1) return null;
       overwrite = true;
     }
-    const result = await sftp.upload(
+    return sftp.upload(
       sessionId,
       localPath,
       remoteDirectory,
       (progress) => mainWindow && mainWindow.webContents.send('sftp:progress', progress),
       overwrite,
     );
-    return { canceled: false, ...result };
+  };
+  handle('sftp:upload', async (sessionId, remoteDirectory) => {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Chọn file để upload',
+      properties: ['openFile', 'multiSelections'],
+    });
+    if (picked.canceled || !picked.filePaths.length) return { canceled: true };
+    let uploaded = 0;
+    for (const localPath of picked.filePaths) {
+      const result = await uploadOne(sessionId, remoteDirectory, localPath);
+      if (result) uploaded += 1;
+    }
+    return { canceled: false, uploaded };
   });
   handle('sftp:download', async (sessionId, remotePath) => {
     const picked = await dialog.showSaveDialog(mainWindow, {
@@ -427,10 +617,10 @@ function registerIpc() {
       filters: [{ name: 'Terminal log', extensions: ['log', 'txt'] }],
     });
     if (picked.canceled || !picked.filePath) return false;
-    sessionLogs.set(sessionId, fs.createWriteStream(picked.filePath, { flags: 'wx', mode: 0o600 }));
-    return true;
+    if (!ssh.has(sessionId)) throw new Error('Phiên SSH đã đóng trong lúc chọn file');
+    return sessionLogs.start(sessionId, picked.filePath);
   });
-  handle('log:stop', (sessionId) => stopSessionLog(validateId(sessionId, 'Session ID')));
+  handle('log:stop', (sessionId) => sessionLogs.stop(validateId(sessionId, 'Session ID')));
 
   handle('dialog:pickPrivateKey', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -458,8 +648,6 @@ function registerIpc() {
     return true;
   });
 
-  handle('win:isMaximized', () => Boolean(mainWindow && mainWindow.isMaximized()));
-
   handle('dialog:confirm', async (message, detail) => {
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'question',
@@ -483,6 +671,22 @@ function buildMenu() {
   Menu.setApplicationMenu(null);
 }
 
+/**
+ * Lưới an toàn cuối cùng. Một lỗi ngoài dự kiến ở main process sẽ giết mọi
+ * phiên SSH đang mở mà không để lại dấu vết; ở đây ta ít nhất ghi lại được nó
+ * và báo cho người dùng thay vì biến mất lặng lẽ.
+ */
+function installCrashGuards() {
+  process.on('uncaughtException', (err) => {
+    if (diagnostics) diagnostics.write('uncaught', err);
+    notify('Lỗi nội bộ: ' + safeErrorMessage(err) + '. Các phiên đang mở vẫn giữ nguyên.', 'error');
+  });
+  process.on('unhandledRejection', (reason) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    if (diagnostics) diagnostics.write('unhandled', err);
+  });
+}
+
 // Chỉ cho phép một tiến trình, tránh hai cửa sổ ghi đè vault của nhau
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -496,13 +700,22 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     const userData = app.getPath('userData');
+    windowStatePath = path.join(userData, 'window-state.json');
+    diagnostics = new DiagnosticLog(path.join(userData, 'diagnostic.log'));
     vault = new Vault(path.join(userData, 'vault.enc'));
     ssh = new SshManager(new KnownHosts(path.join(userData, 'known_hosts.json')), confirmHostKey);
     sftp = new SftpService(ssh);
+    sessionLogs = new SessionLogs((sessionId, message) => {
+      diagnostics.write('log', message);
+      notify('Ghi log phiên đã dừng: ' + message, 'error');
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('log:state', sessionId, false);
+    });
 
+    installCrashGuards();
     registerIpc();
     buildMenu();
     createWindow();
+    startAutoLockWatch();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -510,13 +723,17 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => {
+    if (sessionLogs) sessionLogs.stopAll();
     if (ssh) ssh.disconnectAll();
     if (vault) vault.lock();
     if (currentPlatform.shouldQuitOnWindowClose()) app.quit();
   });
 
   app.on('before-quit', () => {
-    for (const sessionId of [...sessionLogs.keys()]) stopSessionLog(sessionId);
+    quitConfirmed = true;
+    clearInterval(autoLockTimer);
+    if (sessionLogs) sessionLogs.stopAll();
+    for (const sessionId of [...pumps.keys()]) disposePump(sessionId);
     if (ssh) ssh.disconnectAll();
     if (vault) vault.lock();
   });

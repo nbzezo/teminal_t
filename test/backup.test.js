@@ -106,6 +106,6 @@ function ok(label) {
   console.error(err.stack);
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {}
+  } catch { /* thu muc tam co the da bi xoa */ }
   process.exit(1);
 });

@@ -30,6 +30,16 @@ fs.writeFileSync(
     'Host alias-khong-hostname',
     '  User minhtu',
     '',
+    // Một mục hỏng không được phép làm hỏng cả lần nhập
+    'Host host-sai',
+    '  HostName khong hop le/tí nào',
+    '  User deploy',
+    '',
+    'Host sau-muc-hong',
+    '  HostName sau-muc-hong.internal',
+    '  User deploy',
+    '  ProxyJump deploy@web-prod:2222',
+    '',
   ].join('\n'),
   'utf8'
 );
@@ -50,8 +60,20 @@ function ok(label) {
   const result = vault.importSshConfig();
   const list = vault.listConnections();
 
-  assert.strictEqual(result.added, 3);
-  ok('nhập đúng 3 mục, bỏ qua Host wildcard');
+  assert.strictEqual(result.added, 4);
+  ok('nhập đúng 4 mục hợp lệ, bỏ qua Host wildcard');
+
+  // Trước đây một mục sai định dạng ném lỗi ra giữa vòng lặp và giết cả lần nhập.
+  assert.strictEqual(result.errors.length, 1);
+  assert.strictEqual(result.errors[0].alias, 'host-sai');
+  assert.ok(list.some((c) => c.name === 'sau-muc-hong'));
+  ok('mục sai định dạng bị bỏ qua kèm lý do, các mục sau vẫn được nhập');
+
+  const jumped = list.find((c) => c.name === 'sau-muc-hong');
+  const bastion = list.find((c) => c.name === 'web-prod');
+  assert.strictEqual(result.jumpsLinked, 1);
+  assert.strictEqual(jumped.jumpHostId, bastion.id);
+  ok('ProxyJump được nối vào đúng kết nối làm jump host');
 
   const web = list.find((c) => c.name === 'web-prod');
   assert.strictEqual(web.host, '203.0.113.10');
@@ -78,7 +100,8 @@ function ok(label) {
 
   const again = vault.importSshConfig();
   assert.strictEqual(again.added, 0);
-  assert.strictEqual(vault.listConnections().length, 3);
+  assert.strictEqual(again.skipped, 5);
+  assert.strictEqual(vault.listConnections().length, 4);
   ok('nhập lại lần nữa không tạo bản trùng');
 
   fs.rmSync(fakeHome, { recursive: true, force: true });
@@ -86,6 +109,6 @@ function ok(label) {
 })().catch((err) => {
   console.error('\nTHAT BAI: ' + err.message);
   console.error(err.stack);
-  try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch { /* thu muc tam co the da bi xoa */ }
   process.exit(1);
 });

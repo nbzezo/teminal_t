@@ -1,6 +1,6 @@
 {
   "name": "sshman",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "SSH connection manager - luu, truy cap nhanh va thao tac lenh",
   "main": "src/main/main.js",
   "scripts": {
@@ -9,7 +9,9 @@
     "build": "electron-builder",
     "build:win": "electron-builder --win nsis portable",
     "build:linux": "electron-builder --linux AppImage deb",
-    "test": "node test/platform.test.js && node test/security.test.js && node test/vault.test.js && node test/backup.test.js && node test/import.test.js && node test/sftp.test.js && node test/tunnel.test.js && node test/metrics.test.js && node test/utf8.test.js && node test/ssh.test.js && electron test/ui.test.js && electron test/ime.test.js && npm run test:theme",
+    "lint": "eslint .",
+    "test": "npm run lint && node test/platform.test.js && node test/security.test.js && node test/vault.test.js && node test/backup.test.js && node test/import.test.js && node test/sftp.test.js && node test/tunnel.test.js && node test/metrics.test.js && node test/runtime.test.js && node test/utf8.test.js && node test/ssh.test.js && electron test/ui.test.js && electron test/ime.test.js && npm run test:theme",
+    "test:runtime": "node test/runtime.test.js",
     "test:platform": "node test/platform.test.js",
     "test:vault": "node test/vault.test.js",
     "test:security": "node test/security.test.js && node test/backup.test.js",
@@ -69,6 +71,7 @@
   },
   "devDependencies": {
     "electron": "^44.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.9.1"
   }
 }

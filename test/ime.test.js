@@ -203,7 +203,7 @@ app.whenReady().then(async () => {
     console.log('\nNGOAI LE: ' + err.message);
     console.log(err.stack);
   } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* thu muc tam co the da bi xoa */ }
     app.exit(failed === 0 ? 0 : 1);
   }
 });

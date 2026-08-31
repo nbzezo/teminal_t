@@ -414,26 +414,6 @@ kbd {
   text-overflow: ellipsis;
 }
 
-.conn-edit {
-  opacity: 0;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: default;
-  padding: 4px;
-  border-radius: 5px;
-  display: flex;
-  line-height: 0;
-}
-.conn-item:hover .conn-edit,
-.conn-item.selected .conn-edit {
-  opacity: 0.7;
-}
-.conn-edit:hover {
-  opacity: 1;
-  background: var(--hover);
-}
-
 .list-empty {
   text-align: center;
   color: var(--dim);
@@ -724,9 +704,6 @@ kbd {
 .toast.toast-error {
   background: var(--destructive-bg);
   color: #ffffff;
-}
-.toast.toast-ok .toast-mark {
-  color: #8ff0be;
 }
 @keyframes toast-in {
   from {
@@ -1184,9 +1161,6 @@ textarea:not(.xterm-helper-textarea)::placeholder {
   gap: 8px;
   margin-bottom: 12px;
 }
-.sftp-toolbar input {
-  flex: 1;
-}
 .sftp-list {
   border: 1px solid var(--border);
   border-radius: var(--r-card);
@@ -1326,4 +1300,549 @@ input,
 textarea,
 .term-pane {
   user-select: text;
+}
+
+/* =============================================================================
+ * Bổ sung: khả năng dùng bàn phím, menu ngữ cảnh, và các thành phần mới
+ * ========================================================================== */
+
+/* Vòng focus: trước đây chỉ ô nhập mới có, nên người dùng bàn phím không nhìn
+   thấy mình đang đứng ở đâu trên nút, tab hay danh sách máy chủ. */
+button:focus-visible,
+[role="button"]:focus-visible,
+.conn-item:focus-visible,
+.tab:focus-visible,
+.palette-item:focus-visible,
+.crumb:focus-visible,
+.dialog-tab:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-button);
+}
+.wc:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Đường dẫn kho, vân tay host key và nội dung lỗi là những thứ người ta cần dán
+   đi chỗ khác — không được nằm trong vùng cấm bôi đen. */
+.selectable {
+  user-select: text;
+  cursor: text;
+}
+
+/* ============================ Ô tìm kiếm ============================ */
+
+.search-wrap {
+  display: flex;
+  align-items: center;
+}
+#search {
+  flex: 1;
+  padding-right: 56px;
+}
+.search-count {
+  position: absolute;
+  right: 40px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+.search-clear {
+  position: absolute;
+  right: 18px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: var(--button-bg);
+  color: var(--window-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0.7;
+}
+.search-clear:hover {
+  opacity: 1;
+  background: var(--button-hover);
+}
+
+/* ==================== Danh sách máy chủ (item là <button>) ==================== */
+
+.conn-item {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+.conn-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.conn-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.conn-action {
+  opacity: 0;
+  color: inherit;
+  padding: 4px;
+  border-radius: 5px;
+  display: flex;
+  line-height: 0;
+}
+.conn-item:hover .conn-action,
+.conn-item.selected .conn-action,
+.conn-item:focus-within .conn-action,
+.conn-action.on {
+  opacity: 0.7;
+}
+.conn-action:hover {
+  opacity: 1;
+  background: var(--hover);
+}
+.conn-favorite.on {
+  color: var(--warning);
+  opacity: 1;
+}
+.conn-item.selected .conn-favorite.on {
+  color: #ffffff;
+}
+
+/* ==================== Chip lệnh nhanh (nhãn là <button>) ==================== */
+
+.snippet-chip .chip-name,
+.snippet-chip .chip-edit {
+  background: none;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+  cursor: default;
+}
+.snippet-chip .chip-name {
+  padding-right: 4px;
+}
+
+/* ==================== Lớp phủ trên pane ==================== */
+
+.pane-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(20, 6, 15, 0.82);
+  z-index: 4;
+}
+.pane-overlay-message {
+  margin: 0;
+  max-width: 44ch;
+  color: #f4e7ef;
+  font-size: 13.5px;
+  line-height: 1.6;
+  user-select: text;
+}
+.pane-overlay-actions {
+  display: flex;
+  gap: 8px;
+}
+.pane-overlay .btn svg {
+  margin-right: 5px;
+}
+
+/* ==================== Thanh tìm trong terminal ==================== */
+
+.terminal-search {
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--r-card);
+  background: var(--dialog-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-dialog);
+}
+#term-search-input {
+  width: 180px;
+  height: 28px;
+}
+.term-search-count {
+  min-width: 56px;
+  text-align: center;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+}
+.term-search-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--r-button);
+  background: transparent;
+  color: var(--window-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 12px;
+  font-family: inherit;
+}
+.term-search-btn:hover {
+  background: var(--button-bg);
+}
+.term-search-btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ==================== Menu chuột phải ==================== */
+
+.context-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 190px;
+  padding: 5px;
+  border-radius: var(--r-card);
+  background: var(--dialog-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-dialog);
+  display: flex;
+  flex-direction: column;
+}
+.context-item {
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--window-fg);
+  font-family: inherit;
+  font-size: 13.5px;
+  padding: 7px 10px;
+  border-radius: var(--r-button);
+}
+.context-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+.context-item:disabled {
+  opacity: 0.4;
+}
+.context-item.destructive {
+  color: var(--destructive-text);
+}
+.context-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--separator);
+}
+
+/* ==================== Tab trong hộp thoại ==================== */
+
+.dialog-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.dialog-tabs::-webkit-scrollbar {
+  display: none;
+}
+.dialog-tab {
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 13.5px;
+  padding: 8px 12px;
+  border-radius: var(--r-button) var(--r-button) 0 0;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.dialog-tab:hover {
+  background: var(--hover);
+}
+.dialog-tab.active {
+  color: var(--window-fg);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+.settings-note {
+  margin-top: 0;
+}
+
+/* ==================== Breadcrumb SFTP ==================== */
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+  scrollbar-width: none;
+}
+.breadcrumb::-webkit-scrollbar {
+  display: none;
+}
+.crumb {
+  border: none;
+  background: transparent;
+  color: var(--window-fg);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 4px 6px;
+  border-radius: var(--r-button);
+  white-space: nowrap;
+}
+.crumb:hover {
+  background: var(--hover);
+}
+.crumb.current {
+  font-weight: 700;
+}
+.crumb-sep {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+/* ==================== Bảng file SFTP ==================== */
+
+.sftp-head {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 110px 150px 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 6px;
+}
+.sftp-head button {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 4px 2px;
+  border-radius: 4px;
+}
+.sftp-head button:hover {
+  background: var(--hover);
+  color: var(--window-fg);
+}
+.sftp-head button.sorted {
+  color: var(--window-fg);
+}
+.sftp-row {
+  grid-template-columns: minmax(200px, 1fr) 110px 150px 40px;
+  gap: 10px;
+}
+.sftp-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sftp-name svg {
+  flex-shrink: 0;
+  color: var(--dim);
+}
+.sftp-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-icon {
+  width: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sftp-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.progress {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--button-bg);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+/* ==================== Trạng thái tunnel ==================== */
+
+.tunnel-state {
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--dim);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--button-bg);
+  white-space: nowrap;
+}
+.tunnel-state.on {
+  color: var(--success);
+}
+
+/* ==================== Nút ghi log đang bật ==================== */
+
+.hb-btn {
+  position: relative;
+}
+.hb-btn.recording {
+  color: var(--destructive-text);
+}
+.hb-btn.recording::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--destructive-bg);
+}
+
+/* ==================== Màn hình khoá ==================== */
+
+.lock-field {
+  position: relative;
+  display: flex;
+}
+.lock-field input {
+  flex: 1;
+  padding-right: 38px;
+}
+.lock-reveal {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--r-button);
+  background: transparent;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.lock-reveal:hover {
+  background: var(--button-bg);
+  color: var(--window-fg);
+}
+.lock-reveal[aria-pressed="true"] {
+  color: var(--accent);
+}
+.lock-caps {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--warning);
+}
+.strength {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.strength-track {
+  display: flex;
+  gap: 4px;
+}
+.strength-track span {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--button-bg);
+}
+.strength[data-score="1"] .strength-track span:nth-child(-n + 1),
+.strength[data-score="2"] .strength-track span:nth-child(-n + 2) {
+  background: var(--destructive-bg);
+}
+.strength[data-score="3"] .strength-track span:nth-child(-n + 3) {
+  background: var(--warning);
+}
+.strength[data-score="4"] .strength-track span {
+  background: var(--success);
+}
+.strength-label {
+  font-size: 12px;
+  text-align: left;
+}
+
+/* ==================== Bảng phím tắt ==================== */
+
+#shortcuts-modal .info-list dt {
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+
+/* Nút bị vô hiệu phải nhìn ra được là vô hiệu, không chỉ im lặng khi bấm. */
+.btn:disabled,
+.hb-btn:disabled,
+.term-search-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Nhãn môi trường Production: nằm ngoài phần chữ bị cắt nên không biến mất
+   khi tên máy chủ dài. */
+.conn-badge:not(:empty) {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1.6;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--destructive-bg);
+  color: #ffffff;
+}
+.conn-item.selected .conn-badge:not(:empty) {
+  background: rgba(0, 0, 0, 0.3);
 }

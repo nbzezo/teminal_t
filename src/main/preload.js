@@ -2,6 +2,15 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+/** Đăng ký listener và trả về hàm gỡ, để renderer không rò listener. */
+function subscribe(channel, mapArgs) {
+  return (handler) => {
+    const listener = (_event, ...args) => handler(...mapArgs(...args));
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  };
+}
+
 /**
  * Cầu nối duy nhất giữa renderer và main process.
  * Renderer không bao giờ chạm tới Node, tới file vault hay tới mật khẩu đã lưu:
@@ -17,15 +26,21 @@ const api = {
     importSshConfig: () => ipcRenderer.invoke('vault:importSshConfig'),
     settings: () => ipcRenderer.invoke('vault:settings'),
     saveSettings: (settings) => ipcRenderer.invoke('vault:saveSettings', settings),
+    workspace: () => ipcRenderer.invoke('vault:workspace'),
+    saveWorkspace: (workspace) => ipcRenderer.invoke('vault:saveWorkspace', workspace),
     exportBackup: (password, options) =>
       ipcRenderer.invoke('vault:exportBackup', password, options),
     importBackup: (password) => ipcRenderer.invoke('vault:importBackup', password),
+    // Main process là nơi giữ đồng hồ tự khoá; renderer chỉ báo có hoạt động.
+    ping: () => ipcRenderer.send('vault:activity'),
+    onLocked: subscribe('vault:locked', () => []),
   },
 
   connections: {
     list: () => ipcRenderer.invoke('conn:list'),
     save: (conn) => ipcRenderer.invoke('conn:save', conn),
     remove: (id) => ipcRenderer.invoke('conn:delete', id),
+    jumpUsers: (id) => ipcRenderer.invoke('conn:jumpUsers', id),
     duplicate: (id) => ipcRenderer.invoke('conn:duplicate', id),
     saveTunnel: (connectionId, tunnel) => ipcRenderer.invoke('conn:saveTunnel', connectionId, tunnel),
     deleteTunnel: (connectionId, tunnelId) => ipcRenderer.invoke('conn:deleteTunnel', connectionId, tunnelId),
@@ -42,21 +57,18 @@ const api = {
       ipcRenderer.invoke('ssh:open', sessionId, connectionId, size),
     reconnect: (sessionId, connectionId, size) =>
       ipcRenderer.invoke('ssh:reconnect', sessionId, connectionId, size),
+    // Pane mới trên chính kết nối SSH đang chạy, không bắt tay lại.
+    split: (sessionId, sourceSessionId, size) =>
+      ipcRenderer.invoke('ssh:split', sessionId, sourceSessionId, size),
     input: (sessionId, data) => ipcRenderer.send('ssh:input', sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.send('ssh:resize', sessionId, cols, rows),
+    // Báo đã vẽ xong bao nhiêu byte, để main biết khi nào phải phanh dòng dữ liệu.
+    ack: (sessionId, bytes) => ipcRenderer.send('ssh:ack', sessionId, bytes),
     close: (sessionId) => ipcRenderer.invoke('ssh:close', sessionId),
     metrics: (sessionId) => ipcRenderer.invoke('ssh:metrics', sessionId),
 
-    onData: (handler) => {
-      const listener = (_event, sessionId, data) => handler(sessionId, data);
-      ipcRenderer.on('ssh:data', listener);
-      return () => ipcRenderer.removeListener('ssh:data', listener);
-    },
-    onStatus: (handler) => {
-      const listener = (_event, sessionId, status) => handler(sessionId, status);
-      ipcRenderer.on('ssh:status', listener);
-      return () => ipcRenderer.removeListener('ssh:status', listener);
-    },
+    onData: subscribe('ssh:data', (sessionId, data) => [sessionId, data]),
+    onStatus: subscribe('ssh:status', (sessionId, status) => [sessionId, status]),
   },
 
   dialogs: {
@@ -78,11 +90,7 @@ const api = {
     upload: (sessionId, remoteDirectory) => ipcRenderer.invoke('sftp:upload', sessionId, remoteDirectory),
     download: (sessionId, remotePath) => ipcRenderer.invoke('sftp:download', sessionId, remotePath),
     cancel: (transferId) => ipcRenderer.invoke('sftp:cancel', transferId),
-    onProgress: (handler) => {
-      const listener = (_event, progress) => handler(progress);
-      ipcRenderer.on('sftp:progress', listener);
-      return () => ipcRenderer.removeListener('sftp:progress', listener);
-    },
+    onProgress: subscribe('sftp:progress', (progress) => [progress]),
   },
 
   tunnels: {
@@ -95,6 +103,7 @@ const api = {
     status: (sessionId) => ipcRenderer.invoke('log:status', sessionId),
     start: (sessionId) => ipcRenderer.invoke('log:start', sessionId),
     stop: (sessionId) => ipcRenderer.invoke('log:stop', sessionId),
+    onState: subscribe('log:state', (sessionId, active) => [sessionId, active]),
   },
 
   // Cửa sổ không khung: trang tự vẽ nút thu nhỏ / phóng to / đóng
@@ -102,16 +111,13 @@ const api = {
     minimize: () => ipcRenderer.invoke('win:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('win:toggleMaximize'),
     close: () => ipcRenderer.invoke('win:close'),
-    isMaximized: () => ipcRenderer.invoke('win:isMaximized'),
-    onStateChange: (handler) => {
-      const listener = (_event, state) => handler(state);
-      ipcRenderer.on('win:state', listener);
-      return () => ipcRenderer.removeListener('win:state', listener);
-    },
+    onStateChange: subscribe('win:state', (state) => [state]),
   },
 
   app: {
     info: () => ipcRenderer.invoke('app:info'),
+    setTheme: (theme) => ipcRenderer.invoke('app:setTheme', theme),
+    onNotice: subscribe('app:notice', (notice) => [notice]),
   },
 
   clipboard: {

@@ -3,7 +3,6 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const assert = require('assert');
 const net = require('net');
 const { execFileSync } = require('child_process');
 const PROJECT = path.join(__dirname, '..');
@@ -23,7 +22,6 @@ execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', protectedKeyPath, '-N', 'key-
 
 const PASSWORD = 'mat-khau-cua-server';
 const USERNAME = 'tester';
-const clientPubKey = fs.readFileSync(clientKeyPath + '.pub', 'utf8').trim();
 
 let passed = 0;
 let failed = 0;
@@ -385,6 +383,6 @@ function connectSession(manager, id, conn, size) {
     server.close();
     jumpServer.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {}
+  } catch { /* thu muc tam co the da bi xoa */ }
   process.exit(1);
 });

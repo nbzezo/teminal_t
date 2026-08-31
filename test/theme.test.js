@@ -169,10 +169,13 @@ app.whenReady().then(async () => {
     check('xterm đã dựng xong khung màn hình', xterm);
 
     // --- Bảng màu Tango khai báo trong nguồn ---
-    const src = fs.readFileSync(
-      path.join(__dirname, '..', 'src', 'renderer', 'app.js'),
-      'utf8'
-    );
+    // Bảng màu nằm ở module nào cũng được, miễn là giá trị không đổi.
+    const rendererDir = path.join(__dirname, '..', 'src', 'renderer');
+    const src = fs
+      .readdirSync(rendererDir)
+      .filter((name) => name.endsWith('.js'))
+      .map((name) => fs.readFileSync(path.join(rendererDir, name), 'utf8'))
+      .join('\n');
     const lech = Object.entries(UBUNTU_TERMINAL).filter(
       ([ten, mau]) => !new RegExp(ten + ":\\s*'" + mau + "'").test(src)
     );
@@ -197,7 +200,7 @@ app.whenReady().then(async () => {
     console.log('\nNGOAI LE: ' + err.message);
     console.log(err.stack);
   } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* thu muc tam co the da bi xoa */ }
     app.exit(failed === 0 ? 0 : 1);
   }
 });

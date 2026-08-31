@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { makeSalt, deriveKey, encrypt, decrypt, wipe, SCRYPT_PARAMS } = require('./crypto');
+const { makeSalt, deriveKey, encrypt, decrypt, wipe, readParams, SCRYPT_PARAMS } = require('./crypto');
 const { currentPlatform } = require('./platform');
 const {
   cleanString,
@@ -17,21 +17,40 @@ const {
 const { normalizeRemoteRoot } = require('./remote-path');
 
 const VAULT_VERSION = 1;
-const PAYLOAD_SCHEMA_VERSION = 4;
+const PAYLOAD_SCHEMA_VERSION = 5;
 const BACKUP_VERSION = 1;
+// Kho là JSON của vài trăm bản ghi; file lớn hơn mức này là hỏng hoặc bị thay,
+// và đọc nó vào RAM trước khi biết điều đó là việc không cần thiết.
+const MAX_VAULT_BYTES = 20 * 1024 * 1024;
+// Kho này giữ credential SSH của cả hạ tầng và không có đường khôi phục, nên
+// 8 ký tự là quá mỏng cho thứ duy nhất đứng giữa nó và người cầm được file.
+const MIN_MASTER_PASSWORD = 12;
+
+const THEMES = ['system', 'light', 'dark'];
+const TERMINAL_FONTS = ['ubuntu-mono', 'cascadia', 'consolas'];
+
+function defaultSettings() {
+  return {
+    autoLockMinutes: 15,
+    clipboardClearSeconds: 30,
+    terminalFontFamily: 'ubuntu-mono',
+    terminalFontSize: 14,
+    terminalBackground: '#300a24',
+    theme: 'system',
+    copyOnSelect: false,
+    confirmOnExit: true,
+    restoreSessions: true,
+    diagnosticLog: false,
+  };
+}
 
 function emptyVault() {
   return {
     schemaVersion: PAYLOAD_SCHEMA_VERSION,
     connections: [],
     snippets: [],
-    settings: {
-      autoLockMinutes: 15,
-      clipboardClearSeconds: 30,
-      terminalFontFamily: 'ubuntu-mono',
-      terminalFontSize: 14,
-      terminalBackground: '#300a24',
-    },
+    settings: defaultSettings(),
+    workspace: { sessions: [] },
   };
 }
 
@@ -57,15 +76,46 @@ function normalizeTunnel(input) {
     type,
     bindHost: '127.0.0.1',
   };
+  // Cổng 0 = để hệ điều hành tự cấp, đúng như `ssh -L 0:…`.
   if (type === 'dynamic') {
-    tunnel.localPort = validatePort(input.localPort);
+    tunnel.localPort = validatePort(input.localPort, { allowZero: true });
     return tunnel;
   }
-  if (type === 'remote') tunnel.remotePort = validatePort(input.remotePort);
-  else tunnel.localPort = validatePort(input.localPort);
+  if (type === 'remote') tunnel.remotePort = validatePort(input.remotePort, { allowZero: true });
+  else tunnel.localPort = validatePort(input.localPort, { allowZero: true });
   tunnel.destinationHost = validateHost(input.destinationHost);
   tunnel.destinationPort = validatePort(input.destinationPort);
   return tunnel;
+}
+
+/** Giữ nguyên giá trị boolean đã lưu, và chỉ khi đó mới rơi về mặc định. */
+function boolOr(value, fallback) {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function migrateSettings(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const fallback = defaultSettings();
+  return {
+    autoLockMinutes: Number.isInteger(source.autoLockMinutes)
+      ? Math.min(240, Math.max(1, source.autoLockMinutes))
+      : fallback.autoLockMinutes,
+    clipboardClearSeconds: Number.isInteger(source.clipboardClearSeconds)
+      ? Math.min(300, Math.max(0, source.clipboardClearSeconds))
+      : fallback.clipboardClearSeconds,
+    terminalFontFamily: TERMINAL_FONTS.includes(source.terminalFontFamily)
+      ? source.terminalFontFamily
+      : fallback.terminalFontFamily,
+    terminalFontSize: Math.round(boundedNumber(source.terminalFontSize, fallback.terminalFontSize, 10, 28)),
+    terminalBackground: /^#[0-9a-f]{6}$/i.test(String(source.terminalBackground || ''))
+      ? String(source.terminalBackground).toLowerCase()
+      : fallback.terminalBackground,
+    theme: THEMES.includes(source.theme) ? source.theme : fallback.theme,
+    copyOnSelect: boolOr(source.copyOnSelect, fallback.copyOnSelect),
+    confirmOnExit: boolOr(source.confirmOnExit, fallback.confirmOnExit),
+    restoreSessions: boolOr(source.restoreSessions, fallback.restoreSessions),
+    diagnosticLog: boolOr(source.diagnosticLog, fallback.diagnosticLog),
+  };
 }
 
 function migratePayload(payload) {
@@ -74,24 +124,11 @@ function migratePayload(payload) {
     schemaVersion: PAYLOAD_SCHEMA_VERSION,
     connections: Array.isArray(source.connections) ? source.connections : [],
     snippets: Array.isArray(source.snippets) ? source.snippets : [],
-    settings: {
-      autoLockMinutes: Number.isInteger(source.settings && source.settings.autoLockMinutes)
-        ? Math.min(240, Math.max(1, source.settings.autoLockMinutes))
-        : 15,
-      clipboardClearSeconds: Number.isInteger(source.settings && source.settings.clipboardClearSeconds)
-        ? Math.min(300, Math.max(0, source.settings.clipboardClearSeconds))
-        : 30,
-      terminalFontFamily: ['ubuntu-mono', 'cascadia', 'consolas'].includes(
-        source.settings && source.settings.terminalFontFamily,
-      )
-        ? source.settings.terminalFontFamily
-        : 'ubuntu-mono',
-      terminalFontSize: Math.round(boundedNumber(source.settings && source.settings.terminalFontSize, 14, 10, 28)),
-      terminalBackground: /^#[0-9a-f]{6}$/i.test(
-        String((source.settings && source.settings.terminalBackground) || ''),
-      )
-        ? source.settings.terminalBackground
-        : '#300a24',
+    settings: migrateSettings(source.settings),
+    workspace: {
+      sessions: Array.isArray(source.workspace && source.workspace.sessions)
+        ? source.workspace.sessions.filter((id) => typeof id === 'string').slice(0, 20)
+        : [],
     },
   };
 
@@ -132,6 +169,7 @@ class Vault {
     this.filePath = filePath;
     this.key = null;
     this.salt = null;
+    this.params = null;
     this.data = null;
   }
 
@@ -149,11 +187,12 @@ class Vault {
 
   async init(masterPassword) {
     if (this.exists()) throw new Error('Kho đã tồn tại');
-    if (!masterPassword || masterPassword.length < 8) {
-      throw new Error('Master password phải từ 8 ký tự trở lên');
+    if (!masterPassword || masterPassword.length < MIN_MASTER_PASSWORD) {
+      throw new Error('Master password phải từ ' + MIN_MASTER_PASSWORD + ' ký tự trở lên');
     }
     const salt = makeSalt();
-    this.key = await deriveKey(masterPassword, salt);
+    this.params = { ...SCRYPT_PARAMS };
+    this.key = await deriveKey(masterPassword, salt, this.params);
     this.salt = salt;
     this.data = emptyVault();
     this._persist();
@@ -162,10 +201,20 @@ class Vault {
 
   async unlock(masterPassword) {
     if (!this.exists()) throw new Error('Chưa có kho, hãy tạo mới');
-    const raw = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+    const size = fs.statSync(this.filePath).size;
+    if (size > MAX_VAULT_BYTES) throw new Error('File kho vượt quá giới hạn 20 MB');
+    let raw;
+    try {
+      raw = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+    } catch {
+      throw new Error('File kho không đọc được hoặc đã hỏng');
+    }
     if (raw.version !== VAULT_VERSION) throw new Error('Phiên bản kho không tương thích');
+    // Tham số KDF đi cùng kho, không lấy từ hằng số trong code: kho cũ vẫn mở
+    // được sau khi tham số mặc định thay đổi.
+    const params = readParams(raw.params);
     const salt = Buffer.from(raw.salt, 'base64');
-    const key = await deriveKey(masterPassword, salt);
+    const key = await deriveKey(masterPassword, salt, params);
     let payload;
     try {
       payload = JSON.parse(decrypt(key, raw.blob));
@@ -175,6 +224,7 @@ class Vault {
     }
     this.key = key;
     this.salt = salt;
+    this.params = params;
     this.data = migratePayload(payload);
     if (payload.schemaVersion !== PAYLOAD_SCHEMA_VERSION) this._persist();
     return this.status();
@@ -192,10 +242,11 @@ class Vault {
   }
 
   _persist() {
+    const params = this.params || SCRYPT_PARAMS;
     const body = {
       version: VAULT_VERSION,
       kdf: 'scrypt',
-      params: { N: SCRYPT_PARAMS.N, r: SCRYPT_PARAMS.r, p: SCRYPT_PARAMS.p },
+      params: { N: params.N, r: params.r, p: params.p },
       salt: this.salt.toString('base64'),
       blob: encrypt(this.key, JSON.stringify(this.data)),
     };
@@ -285,10 +336,29 @@ class Vault {
     return this._safe(conn);
   }
 
+  /** Những kết nối sẽ mất jump host nếu xoá `id` — để hỏi trước, không báo sau. */
+  connectionsUsingJumpHost(id) {
+    this._assertUnlocked();
+    return this.data.connections.filter((conn) => conn.jumpHostId === id).map((conn) => this._safe(conn));
+  }
+
   deleteConnection(id) {
     this._assertUnlocked();
+    const before = this.data.connections.length;
     this.data.connections = this.data.connections.filter((c) => c.id !== id);
+    // Không để lại tham chiếu treo: kết nối trỏ tới jump host vừa xoá sẽ chỉ
+    // báo lỗi lúc đang cần kết nối, tức đúng lúc không muốn gặp lỗi nhất.
+    let detached = 0;
+    for (const conn of this.data.connections) {
+      if (conn.jumpHostId === id) {
+        conn.jumpHostId = '';
+        conn.updatedAt = new Date().toISOString();
+        detached += 1;
+      }
+    }
+    this.data.workspace.sessions = this.data.workspace.sessions.filter((item) => item !== id);
     this._persist();
+    return { removed: before !== this.data.connections.length, detached };
   }
 
   duplicateConnection(id) {
@@ -304,6 +374,9 @@ class Vault {
       lastUsedAt: null,
       useCount: 0,
     };
+    // Tunnel phải có ID riêng, nếu không hai kết nối sẽ tranh nhau cùng một
+    // registry và bản sao không bật được tunnel khi bản gốc đang bật.
+    copy.tunnels = (copy.tunnels || []).map((tunnel) => ({ ...tunnel, id: crypto.randomUUID() }));
     this.data.connections.push(copy);
     this._persist();
     return this._safe(copy);
@@ -375,19 +448,22 @@ class Vault {
 
   async changeMasterPassword(oldPassword, newPassword) {
     this._assertUnlocked();
-    if (!newPassword || newPassword.length < 8) {
-      throw new Error('Master password mới phải từ 8 ký tự trở lên');
+    if (!newPassword || newPassword.length < MIN_MASTER_PASSWORD) {
+      throw new Error('Master password mới phải từ ' + MIN_MASTER_PASSWORD + ' ký tự trở lên');
     }
-    const check = await deriveKey(oldPassword, this.salt);
+    const check = await deriveKey(oldPassword, this.salt, this.params || SCRYPT_PARAMS);
     const ok = check.length === this.key.length && crypto.timingSafeEqual(check, this.key);
     wipe(check);
     if (!ok) throw new Error('Master password cũ không đúng');
 
+    // Đổi mật khẩu là dịp nâng kho lên tham số KDF hiện hành.
     const salt = makeSalt();
-    const key = await deriveKey(newPassword, salt);
+    const params = { ...SCRYPT_PARAMS };
+    const key = await deriveKey(newPassword, salt, params);
     wipe(this.key);
     this.key = key;
     this.salt = salt;
+    this.params = params;
     this._persist();
   }
 
@@ -421,8 +497,32 @@ class Vault {
     const terminalBackground = String(input.terminalBackground || this.data.settings.terminalBackground);
     if (!/^#[0-9a-f]{6}$/i.test(terminalBackground)) throw new Error('Màu nền terminal không hợp lệ');
     this.data.settings.terminalBackground = terminalBackground.toLowerCase();
+    const theme = String(input.theme ?? this.data.settings.theme);
+    if (!THEMES.includes(theme)) throw new Error('Chế độ màu không hợp lệ');
+    this.data.settings.theme = theme;
+    for (const flag of ['copyOnSelect', 'confirmOnExit', 'restoreSessions', 'diagnosticLog']) {
+      if (input[flag] !== undefined) {
+        if (typeof input[flag] !== 'boolean') throw new Error('Giá trị của ' + flag + ' phải là true/false');
+        this.data.settings[flag] = input[flag];
+      }
+    }
     this._persist();
     return this.getSettings();
+  }
+
+  /** Danh sách kết nối đang mở tab, để mở lại đúng chỗ đã dừng ở lần sau. */
+  getWorkspace() {
+    this._assertUnlocked();
+    return { sessions: [...this.data.workspace.sessions] };
+  }
+
+  saveWorkspace(input) {
+    this._assertUnlocked();
+    const known = new Set(this.data.connections.map((conn) => conn.id));
+    const sessions = Array.isArray(input && input.sessions) ? input.sessions : [];
+    this.data.workspace.sessions = sessions.filter((id) => known.has(id)).slice(0, 20);
+    this._persist();
+    return this.getWorkspace();
   }
 
   async createEncryptedBackup(password, { includeCredentials = false } = {}) {
@@ -431,7 +531,7 @@ class Vault {
       throw new Error('Mật khẩu backup phải từ 12 ký tự trở lên');
     }
     const salt = makeSalt();
-    const key = await deriveKey(password, salt);
+    const key = await deriveKey(password, salt, SCRYPT_PARAMS);
     const data = structuredClone(this.data);
     if (!includeCredentials) {
       for (const conn of data.connections) {
@@ -479,7 +579,7 @@ class Vault {
       throw new Error('Phiên bản backup không được hỗ trợ');
     }
     const salt = Buffer.from(String(envelope.salt || ''), 'base64');
-    const key = await deriveKey(password, salt);
+    const key = await deriveKey(password, salt, readParams(envelope.params));
     let payload;
     try {
       payload = JSON.parse(decrypt(key, envelope.blob));
@@ -590,28 +690,60 @@ class Vault {
     }
 
     let added = 0;
+    let skipped = 0;
+    const errors = [];
+    const importedByAlias = new Map();
+    const proxyJumps = [];
+
     for (const { alias, fields } of entries) {
       if (!alias || alias.includes('*') || alias.includes('?')) continue;
-      const host = fields.hostname || alias;
-      const username = fields.user || process.env.USERNAME || process.env.USER || '';
-      const port = Number(fields.port) || 22;
-      const duplicate = this.data.connections.some(
-        (c) => c.host === host && c.username === username && c.port === port,
-      );
-      if (duplicate) continue;
-      const keyPath = fields.identityfile ? currentPlatform.expandLocalPath(fields.identityfile) : '';
-      this.saveConnection({
-        name: alias,
-        host,
-        port,
-        username,
-        authType: 'key',
-        privateKeyPath: keyPath,
-        group: 'Imported',
-      });
-      added += 1;
+      // Một mục sai định dạng không được phép làm hỏng cả lần nhập: ghi lại
+      // rồi đi tiếp, và trả danh sách về cho người dùng xem mục nào trượt.
+      try {
+        const host = fields.hostname || alias;
+        const username = fields.user || process.env.USERNAME || process.env.USER || '';
+        const port = Number(fields.port) || 22;
+        const duplicate = this.data.connections.find(
+          (c) => c.host === host && c.username === username && c.port === port,
+        );
+        if (duplicate) {
+          importedByAlias.set(alias, duplicate.id);
+          skipped += 1;
+          continue;
+        }
+        const keyPath = fields.identityfile ? currentPlatform.expandLocalPath(fields.identityfile) : '';
+        const saved = this.saveConnection({
+          name: alias,
+          host,
+          port,
+          username,
+          authType: 'key',
+          privateKeyPath: keyPath,
+          group: 'Imported',
+        });
+        importedByAlias.set(alias, saved.id);
+        // ProxyJump chỉ giải được sau khi mọi alias đã có ID.
+        const jump = (fields.proxyjump || '').split(',')[0].trim();
+        if (jump) proxyJumps.push({ id: saved.id, alias: jump.replace(/^[^@]*@/, '').replace(/:\d+$/, '') });
+        added += 1;
+      } catch (err) {
+        skipped += 1;
+        errors.push({ alias, message: err && err.message ? String(err.message) : 'Không hợp lệ' });
+      }
     }
-    return { added, scanned: entries.length };
+
+    let jumpsLinked = 0;
+    for (const { id, alias } of proxyJumps) {
+      const target =
+        importedByAlias.get(alias) ||
+        (this.data.connections.find((conn) => conn.name === alias || conn.host === alias) || {}).id;
+      const conn = this.data.connections.find((item) => item.id === id);
+      if (!target || !conn || target === id) continue;
+      conn.jumpHostId = target;
+      jumpsLinked += 1;
+    }
+    if (added > 0 || jumpsLinked > 0) this._persist();
+    return { added, skipped, jumpsLinked, scanned: entries.length, errors };
   }
 }
 

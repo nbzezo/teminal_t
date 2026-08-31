@@ -88,7 +88,7 @@ function collectServerMetrics(client, timeoutMs = 5000) {
     };
     const timer = setTimeout(() => {
       finish(new Error('Dashboard hết thời gian chờ máy chủ'));
-      try { if (channel) channel.destroy(); } catch {}
+      try { if (channel) channel.destroy(); } catch { /* channel co the da dong */ }
     }, timeoutMs);
     client.exec(METRICS_COMMAND, (err, stream) => {
       if (err) return finish(new Error('Không chạy được probe giám sát chỉ đọc'));
@@ -96,7 +96,7 @@ function collectServerMetrics(client, timeoutMs = 5000) {
       stream.on('data', (chunk) => {
         output += chunk.toString('utf8');
         if (output.length > 64 * 1024) {
-          try { stream.destroy(); } catch {}
+          try { stream.destroy(); } catch { /* stream co the da dong */ }
           finish(new Error('Dữ liệu dashboard vượt giới hạn'));
         }
       });

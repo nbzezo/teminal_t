@@ -103,7 +103,10 @@ Jump Host và ba chế độ Port Forwarding đã đạt kiểm thử loopback; 
 
 ## Trạng thái kiểm chứng ngày 2026-08-31
 
-- **Windows (máy hiện tại):** `npm test` đạt 167/167; bản unpacked được tạo thành công tại
+- **Windows (máy hiện tại):** sau đợt rà soát 2, `npm test` đạt 211/211 và `npm run lint` sạch.
+  Renderer đã tách thành ES module nạp qua `<script type="module">` — Electron cho phép module
+  script trên `file://`, đã kiểm chứng bằng chính bộ test Electron.
+- **Windows (đợt trước):** `npm test` đạt 167/167; bản unpacked được tạo thành công tại
   `dist/win-unpacked`. NSIS/portable trong lượt rà soát này bị chặn ở cache NSIS ngoài
   workspace (`EPERM`), không phải lỗi compile/package source.
 - **Ubuntu 22.04/24.04:** đã rà source, có unit test adapter, cấu hình package và CI/Xvfb;

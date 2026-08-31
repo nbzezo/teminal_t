@@ -36,8 +36,9 @@ function ok(label) {
   // --- vault: khởi tạo ---
   const vault = new Vault(vaultPath);
   assert.strictEqual(vault.exists(), false);
-  await assert.rejects(() => vault.init('ngan'), /8 ký tự/);
-  ok('từ chối master password ngắn hơn 8 ký tự');
+  await assert.rejects(() => vault.init('ngan'), /12 ký tự/);
+  await assert.rejects(() => vault.init('van-con-ngan'.slice(0, 11)), /12 ký tự/);
+  ok('từ chối master password ngắn hơn 12 ký tự');
 
   await vault.init('master-password-1');
   assert.strictEqual(vault.exists(), true);
@@ -167,23 +168,75 @@ function ok(label) {
   assert.strictEqual(final.getSettings().autoLockMinutes, 30);
   ok('migration/schema giữ nguyên cấu hình tự khoá sau khi mở lại');
 
+  // --- tunnel: cổng 0 và ID riêng cho bản sao ---
+  const tunnelsBefore = final.getConnectionFull(saved.id).tunnels.length;
+  final.saveTunnel(saved.id, {
+    type: 'local',
+    name: 'ephemeral',
+    localPort: 0,
+    destinationHost: '127.0.0.1',
+    destinationPort: 5432,
+  });
+  const tunnelsAfter = final.getConnectionFull(saved.id).tunnels;
+  assert.strictEqual(tunnelsAfter.length, tunnelsBefore + 1);
+  assert.strictEqual(tunnelsAfter.find((t) => t.name === 'ephemeral').localPort, 0);
+  ok('tunnel dùng cổng 0 (hệ điều hành tự cấp) lưu được');
+
   const duplicate = final.duplicateConnection(saved.id);
   assert.notStrictEqual(duplicate.id, saved.id);
   assert.ok(duplicate.name.includes('bản sao'));
   assert.strictEqual(final.getConnectionFull(duplicate.id).password, 'super-secret');
+  const originalTunnelIds = final.getConnectionFull(saved.id).tunnels.map((t) => t.id);
+  const copiedTunnelIds = final.getConnectionFull(duplicate.id).tunnels.map((t) => t.id);
+  assert.strictEqual(copiedTunnelIds.length, originalTunnelIds.length);
+  assert.ok(!copiedTunnelIds.some((id) => originalTunnelIds.includes(id)));
+  ok('sao chép kết nối giữ credential nhưng cấp ID mới cho cả kết nối lẫn tunnel');
   final.deleteConnection(duplicate.id);
-  ok('sao chép kết nối giữ credential trong vault nhưng dùng ID mới');
 
-  // --- xoá ---
-  final.deleteConnection(saved.id);
+  // --- workspace: nhớ tab của lần chạy trước ---
+  final.saveWorkspace({ sessions: [saved.id, 'khong-ton-tai'] });
+  assert.deepStrictEqual(final.getWorkspace().sessions, [saved.id]);
+  ok('workspace chỉ giữ những kết nối còn tồn tại');
+
+  // --- xoá jump host thì phải dọn tham chiếu ---
+  const jumpUser = final.saveConnection({
+    name: 'Qua bastion',
+    host: '10.9.9.9',
+    username: 'deploy',
+    authType: 'key',
+    jumpHostId: saved.id,
+  });
+  assert.deepStrictEqual(
+    final.connectionsUsingJumpHost(saved.id).map((c) => c.name),
+    ['Qua bastion'],
+  );
+  ok('biết trước kết nối nào sẽ mất jump host khi xoá');
+
+  const removal = final.deleteConnection(saved.id);
+  assert.strictEqual(removal.detached, 1);
+  assert.strictEqual(final.getConnectionFull(jumpUser.id).jumpHostId, '');
+  assert.deepStrictEqual(final.getWorkspace().sessions, []);
+  ok('xoá kết nối dọn luôn tham chiếu jump host và tab đã lưu');
+
+  final.deleteConnection(jumpUser.id);
   assert.strictEqual(final.listConnections().length, 1);
   ok('xoá kết nối hoạt động');
+
+  // --- tham số KDF đi theo kho, không lấy từ hằng số trong code ---
+  const envelope = JSON.parse(fs.readFileSync(vaultPath, 'utf8'));
+  assert.strictEqual(typeof envelope.params.N, 'number');
+  envelope.params = { N: 32768, r: 8, p: 1 };
+  fs.writeFileSync(vaultPath, JSON.stringify(envelope));
+  const withParams = new Vault(vaultPath);
+  await withParams.unlock('master-password-2');
+  assert.strictEqual(withParams.params.N, 32768);
+  ok('mở kho bằng đúng tham số KDF ghi trong file');
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
   console.log('\n' + passed + '/' + passed + ' phép kiểm tra đã qua.');
 })().catch((err) => {
   console.error('\nTHAT BAI: ' + err.message);
   console.error(err.stack);
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* thu muc tam co the da bi xoa */ }
   process.exit(1);
 });

@@ -13,7 +13,8 @@ Không sử dụng credential thật, không kết nối ra ngoài và không ch
   và TOFU host-key verification trong `known_hosts.json`.
 - `src/main/preload.js` là API duy nhất cho renderer; `sandbox`, `contextIsolation` bật và
   `nodeIntegration` tắt. Renderer không nhận password/passphrase đã lưu.
-- Baseline trước sửa: `npm test` đạt 126/126. Bản hiện tại đạt 167/167, gồm unit,
+- Baseline trước sửa: `npm test` đạt 126/126. Sau đợt rà soát 1 đạt 177/177. Sau đợt rà soát 2
+  (xem cuối tài liệu) đạt **211/211** cộng `npm run lint` sạch, gồm unit,
   SSH/jump-host loopback, TCP forwarding, Electron UI, IME và theme sáng/tối.
 
 ## Ma trận tính năng
@@ -122,3 +123,71 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 | OS credential store            | P2      | Cần adapter và dependency native đa nền tảng                  | Credential Manager/Keychain/Secret Service; vault fallback            | Lớn         |
 | Snippet execution history      | P2      | Không lưu command/giá trị để tránh giữ secret ngoài ý muốn    | Chỉ lưu snippet ID/time/connection ID, opt-in và cho phép xóa         | Trung bình  |
 | Dashboard Windows/BSD remote   | P3      | Bản hiện tại dùng Linux `/proc`; khác biệt OS                 | Capability probe và parser PowerShell/BSD riêng                       | Trung bình  |
+
+## Đợt rà soát 2 — 2026-08-31
+
+Đợt này bắt đầu từ một phát hiện làm mất giá trị của chính bảng ma trận ở trên:
+**bảng được suy ra từ đọc mã nguồn, không phải từ chạy thử**. Bốn dòng đánh dấu
+"Đã hoàn chỉnh" thực ra không chạy được, vì cả năm đường dẫn đều gọi
+`window.prompt()` — thứ Electron không hỗ trợ và ném lỗi ngay khi gọi.
+
+Quy ước từ nay: chỉ ghi **Đã hoàn chỉnh** khi có test tự động chạy qua đúng
+đường dẫn đó, hoặc có một lần bấm thử được ghi lại. Đọc mã nguồn không đủ.
+
+### Lỗi chặn đã sửa
+
+| Mã   | Vấn đề                                                                                                        | Sửa                                                                                                     | Bằng chứng                                                                             |
+| ---- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| P0-1 | `window.prompt()` ném lỗi trong Electron → biến `${name}` của snippet, đổi tên/chmod/tạo thư mục SFTP và Ctrl+F đều chết im lặng | Hộp nhập liệu trong ứng dụng (`core.askInput`) và thanh tìm terminal thật có đếm kết quả, tới/lui, highlight | `ui.test.js`: prompt ném lỗi, không module renderer nào còn gọi `prompt(`, askInput trả giá trị/null, Ctrl+F mở và Esc đóng |
+| P0-2 | Bật ghi log rồi chọn file đã tồn tại → `'wx'` phát `'error'` không listener → uncaught exception giết main process | `SessionLogs` dùng cờ `'w'`, gắn listener `'error'`, báo về UI; thêm `uncaughtException`/`unhandledRejection` | `runtime.test.js`: ghi vào file đã tồn tại không lỗi; stream giả phát `'error'` được định tuyến về callback |
+
+### Rủi ro ổn định đã sửa
+
+| Mã  | Vấn đề                                                                        | Sửa                                                                                          |
+| --- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| S-1 | Đóng tab lúc hộp thoại xác nhận đang mở để lại phiên SSH mồ côi không đóng được | `pendingOpens`/`cancelledOpens` trong `main.js`; huỷ được kiểm lại sau mỗi hộp thoại          |
+| S-2 | Không có backpressure SSH → IPC → xterm; output lớn làm phình RAM và treo UI    | `OutputPump` gom theo khung 16ms, phanh dòng ở 512 KB, nhả ở 128 KB, tự mở phanh sau 3s im lặng |
+| S-3 | Ghi log tắt im lặng khi tự kết nối lại; nút không phản ánh trạng thái           | Trạng thái ghi log đồng bộ vào nút (`aria-pressed` + chấm đỏ), có kênh `log:state`            |
+| S-4 | Dashboard bắn toast lỗi mỗi 10 giây khi phiên chết lúc modal còn mở            | `activeSession()` thành truy vấn thuần; dashboard báo một lần trong bảng rồi dừng đồng hồ    |
+| S-5 | Download đổi tên ngay sau `'finish'`, race EPERM trên Windows                  | Đợi `'close'`, có timeout dự phòng cho stream không phát `'close'`                            |
+| S-6 | Một mục hỏng trong `~/.ssh/config` làm hỏng cả lần nhập                        | Bọc từng mục, trả `{ added, skipped, jumpsLinked, errors[] }`; thêm hỗ trợ `ProxyJump`        |
+| S-7 | Không có lưới an toàn lỗi, không có log chẩn đoán                              | Handler toàn cục ở cả hai phía + `DiagnosticLog` opt-in đi qua bộ lọc che secret              |
+| S-8 | `unlock` đọc và parse cả file kho không giới hạn kích thước                    | Cap 20 MB, đồng nhất với import backup                                                        |
+
+### Vấn đề logic đã sửa
+
+| Mã   | Vấn đề                                                     | Sửa                                                                                         |
+| ---- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| L-1  | Chia pane mở kết nối SSH mới: 4 pane = 4 lần xác thực       | Tầng "host" trong `SshManager`; pane mới là shell channel trên kết nối sẵn có, đếm tham chiếu |
+| L-2  | Thanh tab hiện một tab cho mỗi pane                         | Tab theo workspace, pane nằm bên trong; đóng tab đóng cả nhóm pane                            |
+| L-3  | Nhân bản kết nối giữ nguyên ID tunnel                       | Sinh lại `randomUUID()` cho từng tunnel khi nhân bản                                          |
+| L-4  | Xoá jump host để lại tham chiếu treo                        | Cảnh báo trước kèm danh sách bị ảnh hưởng, và dọn `jumpHostId` khi xoá                        |
+| L-5  | Cổng 0 mở được nhưng lưu không được                         | `validatePort(..., { allowZero: true })` cho tunnel; UI lưu lại cổng thật được cấp            |
+| L-6  | Không có cách bỏ màu nhận diện                              | Công tắc bật/tắt màu trong form; tắt thì lưu chuỗi rỗng                                       |
+| L-7  | Tham số scrypt ghi vào kho nhưng không bao giờ đọc lại      | `crypto.readParams` đọc và kiểm tham số theo kho; đổi mật khẩu là dịp nâng lên tham số mới    |
+| L-8  | Đồng hồ tự khoá chỉ sống ở renderer                         | Đồng hồ ở main process, renderer chỉ gửi tín hiệu hoạt động                                   |
+| L-9  | Renderer là một file 1641 dòng, không có lint               | Tách 10 module ES; `eslint.config.js` cho cả hai môi trường; `npm test` chạy lint trước       |
+| L-10 | Tài liệu khẳng định nhiều hơn mức đã kiểm chứng             | Mục này, cộng quy ước "Đã hoàn chỉnh" ở đầu phần                                              |
+
+### UI/UX đã sửa
+
+Vòng focus cho mọi nút và danh sách; danh sách máy chủ, tab, palette và chip lệnh
+nhanh chuyển thành phần tử bấm được bằng bàn phím kèm điều hướng mũi tên; `role`
+và `aria-live` cho toast, `role="dialog"` + giam focus + trả focus cho hộp thoại;
+Escape chỉ đóng lớp phủ trên cùng và hỏi lại khi form đang sửa dở; ba nút công cụ
+mờ đi cùng lúc với các nút khác khi chưa có phiên; toàn bộ icon chuyển sang SVG
+symbolic; đường dẫn kho, vân tay host key và nội dung toast bôi đen được; nút kết
+nối lại ngay trên pane đã ngắt; hỏi trước khi thoát khi còn phiên; nhớ kích thước
+cửa sổ và mở lại tab của lần trước; menu chuột phải cho terminal và danh sách máy
+chủ; click mở URL trong scrollback; `Ctrl` +/− đổi cỡ chữ; copy khi bôi đen; SFTP
+có breadcrumb, sắp xếp, kích thước và thời gian đọc được, menu ⋯ và thanh tiến
+độ; cài đặt chia tab và tự lưu; công tắc sáng/tối thủ công; màn hình khoá có cảnh
+báo Caps Lock, nút hiện mật khẩu và thước đo độ mạnh; bảng phím tắt mở bằng `F1`.
+
+### Thay đổi phá vỡ tương thích
+
+- Master password tối thiểu **12 ký tự** (trước là 8). Kho cũ vẫn mở bình thường;
+  giới hạn chỉ áp khi tạo kho mới hoặc đổi mật khẩu.
+- Payload schema lên **v5** (thêm `workspace` và các tuỳ chọn giao diện). Migration
+  từ v1–v4 chạy tự động khi mở kho.
+- `eslint` là devDependency mới: chạy `npm install` trước `npm test`.

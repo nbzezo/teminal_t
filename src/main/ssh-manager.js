@@ -56,14 +56,15 @@ class KnownHosts {
     if (typeof hostKey !== 'string' || hostKey.length > 320) throw new Error('Host key ID không hợp lệ');
     if (!/^SHA256:[A-Za-z0-9+/]{20,}$/.test(fp)) throw new Error('Fingerprint không hợp lệ');
     this.map[hostKey] = fp;
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const tmp = this.filePath + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(this.map, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, this.filePath);
+    this._write();
   }
 
   forget(hostKey) {
     delete this.map[hostKey];
+    this._write();
+  }
+
+  _write() {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     const tmp = this.filePath + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.map, null, 2), { mode: 0o600 });
@@ -78,8 +79,13 @@ class KnownHosts {
 }
 
 /**
- * Quản lý các phiên SSH đang mở. Mỗi phiên là một Client ssh2 kèm một shell
- * có cấp phát pty, dữ liệu được đẩy ngược lên renderer qua callback.
+ * Quản lý các phiên SSH đang mở.
+ *
+ * Một "host" là một kết nối SSH thật (một `ssh2.Client`). Một "session" là một
+ * shell có pty chạy trên host đó — tức một pane trên giao diện. Chia pane không
+ * mở kết nối mới mà xin thêm shell channel trên host sẵn có, nên bốn pane vẫn
+ * chỉ tốn một lần bắt tay và một lần xác thực. Host bị đóng khi pane cuối cùng
+ * của nó đóng.
  */
 class SshManager {
   /**
@@ -91,6 +97,7 @@ class SshManager {
     this.knownHosts = knownHosts;
     this.confirmHostKey = confirmHostKey;
     this.sessions = new Map();
+    this.hosts = new Map();
     this.tunnels = new Map();
     this.cleanupHandlers = new Set();
   }
@@ -104,8 +111,52 @@ class SshManager {
     return () => this.cleanupHandlers.delete(handler);
   }
 
+  /** Host của một phiên; phiên do test dựng tay thì tự làm host của chính nó. */
+  _hostIdOf(sessionId) {
+    const entry = this.sessions.get(sessionId);
+    return (entry && entry.hostId) || sessionId;
+  }
+
+  _attach(host, sessionId, handlers) {
+    const entry = {
+      client: host.client,
+      stream: null,
+      conn: host.conn,
+      remoteTunnels: host.remoteTunnels,
+      hostId: host.id,
+      handlers,
+      finished: false,
+    };
+    host.refs.add(sessionId);
+    this.sessions.set(sessionId, entry);
+    return entry;
+  }
+
+  _fail(sessionId, message) {
+    const entry = this.sessions.get(sessionId);
+    if (!entry || entry.finished) return;
+    entry.finished = true;
+    entry.handlers.onStatus({ state: 'error', message: safeErrorMessage({ message }) });
+    this._cleanup(sessionId);
+    entry.handlers.onClose();
+  }
+
+  /** Lỗi ở tầng kết nối ảnh hưởng mọi pane đang chạy trên host đó. */
+  _failHost(host, message) {
+    for (const sessionId of [...host.refs]) this._fail(sessionId, message);
+  }
+
+  _finishSession(sessionId, state, message) {
+    const entry = this.sessions.get(sessionId);
+    if (!entry || entry.finished) return;
+    entry.finished = true;
+    entry.handlers.onStatus({ state, message });
+    this._cleanup(sessionId);
+    entry.handlers.onClose();
+  }
+
   /**
-   * Mở một phiên shell mới.
+   * Mở một phiên shell mới trên một kết nối SSH mới.
    * @param {string} sessionId
    * @param {object} conn bản ghi đầy đủ từ vault (có thể chứa bí mật)
    * @param {{cols: number, rows: number}} size
@@ -116,65 +167,38 @@ class SshManager {
     size = clampTerminalSize(size);
     if (this.sessions.has(sessionId)) throw new Error('Phiên đã tồn tại');
 
-    const { onData, onStatus, onClose } = handlers;
     const client = new Client();
-    const entry = { client, stream: null, conn, remoteTunnels: new Map() };
-    this.sessions.set(sessionId, entry);
-    let finished = false;
-
-    const fail = (message) => {
-      if (finished) return;
-      finished = true;
-      onStatus({ state: 'error', message: safeErrorMessage({ message }) });
-      this._cleanup(sessionId);
-      onClose();
+    const host = {
+      id: 'host-' + crypto.randomUUID(),
+      client,
+      jumpClient: null,
+      conn,
+      refs: new Set(),
+      remoteTunnels: new Map(),
     };
+    this.hosts.set(host.id, host);
+    const entry = this._attach(host, sessionId, handlers);
 
     client.on('ready', () => {
-      onStatus({
+      handlers.onStatus({
         state: 'connected',
         message: 'Đã kết nối ' + conn.username + '@' + conn.host,
       });
-      client.shell(
-        {
-          term: 'xterm-256color',
-          cols: size.cols || 80,
-          rows: size.rows || 24,
-        },
-        (err, stream) => {
-          if (err) return fail('Không mở được shell: ' + err.message);
-          entry.stream = stream;
-
-          // Ký tự tiếng Việt chiếm 2-3 byte UTF-8 và TCP có thể cắt gói vào giữa
-          // một ký tự. StringDecoder giữ lại phần byte dở dang chờ mảnh kế tiếp,
-          // thay vì giải mã từng mảnh rời rạc và sinh ra ký tự hỏng.
-          const outDecoder = new StringDecoder('utf8');
-          const errDecoder = new StringDecoder('utf8');
-          stream.on('data', (chunk) => onData(outDecoder.write(chunk)));
-          stream.stderr.on('data', (chunk) => onData(errDecoder.write(chunk)));
-          stream.on('close', () => {
-            if (finished) return;
-            finished = true;
-            onStatus({ state: 'closed', message: 'Phiên đã đóng' });
-            this._cleanup(sessionId);
-            onClose();
-          });
-          if (conn.defaultDirectory && conn.defaultDirectory.trim()) {
-            const directory = conn.defaultDirectory.trim().replace(/'/g, `'"'"'`);
-            stream.write("cd -- '" + directory + "'\n");
-          }
-          if (conn.onConnect && conn.onConnect.trim()) stream.write(conn.onConnect.trim() + '\n');
-        },
-      );
+      this._openShell(host, sessionId, entry, size, { runOnConnect: true });
     });
 
-    client.on('error', (err) => fail(safeErrorMessage(err)));
-    client.on('end', () => onStatus({ state: 'ended', message: 'Máy chủ đã ngắt kết nối' }));
+    client.on('error', (err) => this._failHost(host, safeErrorMessage(err)));
+    client.on('end', () => {
+      for (const id of [...host.refs]) {
+        const item = this.sessions.get(id);
+        if (item && !item.finished) item.handlers.onStatus({ state: 'ended', message: 'Máy chủ đã ngắt kết nối' });
+      }
+    });
     client.on('tcp connection', (info, accept, reject) => {
       const tunnel =
-        [...entry.remoteTunnels.values()].find(
+        [...host.remoteTunnels.values()].find(
           (item) => item.remotePort === info.destPort && item.bindHost === info.destIP,
-        ) || [...entry.remoteTunnels.values()].find((item) => item.remotePort === info.destPort);
+        ) || [...host.remoteTunnels.values()].find((item) => item.remotePort === info.destPort);
       if (!tunnel) return reject();
       const channel = accept();
       const socket = net.connect(tunnel.destinationPort, tunnel.destinationHost);
@@ -198,15 +222,15 @@ class SshManager {
 
     let config;
     try {
-      config = this._buildConfig(conn, size);
+      config = this._buildConfig(conn);
     } catch (err) {
       // Lỗi cấu hình (thiếu key...) phải báo bất đồng bộ để caller kịp đăng ký handler
-      setImmediate(() => fail(err.message));
+      setImmediate(() => this._fail(sessionId, err.message));
       return;
     }
 
     if (!conn.jumpHost) {
-      onStatus({
+      handlers.onStatus({
         state: 'connecting',
         message: 'Đang kết nối ' + conn.host + ':' + conn.port + '…',
       });
@@ -215,12 +239,12 @@ class SshManager {
     }
 
     const jumpClient = new Client();
-    entry.jumpClient = jumpClient;
+    host.jumpClient = jumpClient;
     let jumpConfig;
     try {
-      jumpConfig = this._buildConfig(conn.jumpHost, size);
+      jumpConfig = this._buildConfig(conn.jumpHost);
     } catch (err) {
-      setImmediate(() => fail('Jump host: ' + err.message));
+      setImmediate(() => this._fail(sessionId, 'Jump host: ' + err.message));
       return;
     }
     jumpClient.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
@@ -228,26 +252,87 @@ class SshManager {
         finish([conn.jumpHost.password]);
       } else finish([]);
     });
-    jumpClient.once('error', (err) => fail('Jump host: ' + safeErrorMessage(err)));
+    jumpClient.once('error', (err) => this._failHost(host, 'Jump host: ' + safeErrorMessage(err)));
     jumpClient.once('ready', () => {
       jumpClient.forwardOut('127.0.0.1', 0, config.host, config.port, (err, channel) => {
-        if (err) return fail('Jump host không tới được máy đích: ' + err.message);
+        if (err) return this._failHost(host, 'Jump host không tới được máy đích: ' + err.message);
         config.sock = channel;
-        onStatus({
+        handlers.onStatus({
           state: 'connecting',
           message: 'Đang kết nối máy đích qua ' + conn.jumpHost.name + '…',
         });
         client.connect(config);
       });
     });
-    onStatus({
+    handlers.onStatus({
       state: 'connecting',
       message: 'Đang kết nối jump host ' + conn.jumpHost.host + ':' + conn.jumpHost.port + '…',
     });
     jumpClient.connect(jumpConfig);
   }
 
-  _buildConfig(conn, size) {
+  /**
+   * Thêm một pane trên chính kết nối SSH của một phiên đang chạy: một shell
+   * channel nữa, không bắt tay lại, không xác thực lại, không hỏi host key lại.
+   */
+  openShell(sessionId, sourceSessionId, size, handlers) {
+    sessionId = validateId(sessionId, 'Session ID');
+    sourceSessionId = validateId(sourceSessionId, 'Session ID');
+    if (this.sessions.has(sessionId)) throw new Error('Phiên đã tồn tại');
+    const source = this.sessions.get(sourceSessionId);
+    if (!source || !source.stream) throw new Error('Phiên gốc chưa kết nối');
+    const host = this.hosts.get(source.hostId);
+    if (!host) throw new Error('Kết nối gốc không còn tồn tại');
+
+    const entry = this._attach(host, sessionId, handlers);
+    handlers.onStatus({
+      state: 'connected',
+      message: 'Đã mở pane mới trên ' + host.conn.username + '@' + host.conn.host,
+    });
+    // Lệnh tự động chỉ chạy một lần cho cả kết nối, không lặp ở mỗi pane.
+    this._openShell(host, sessionId, entry, clampTerminalSize(size), { runOnConnect: false });
+    return { sessionId, hostId: host.id };
+  }
+
+  _openShell(host, sessionId, entry, size, { runOnConnect }) {
+    const conn = host.conn;
+    host.client.shell(
+      {
+        term: 'xterm-256color',
+        cols: size.cols || 80,
+        rows: size.rows || 24,
+      },
+      (err, stream) => {
+        if (err) return this._fail(sessionId, 'Không mở được shell: ' + err.message);
+        if (!this.sessions.has(sessionId)) {
+          // Pane đã bị đóng trong lúc chờ server cấp channel.
+          try {
+            stream.end();
+          } catch {
+            // channel có thể đã hỏng, bỏ qua
+          }
+          return;
+        }
+        entry.stream = stream;
+
+        // Ký tự tiếng Việt chiếm 2-3 byte UTF-8 và TCP có thể cắt gói vào giữa
+        // một ký tự. StringDecoder giữ lại phần byte dở dang chờ mảnh kế tiếp,
+        // thay vì giải mã từng mảnh rời rạc và sinh ra ký tự hỏng.
+        const outDecoder = new StringDecoder('utf8');
+        const errDecoder = new StringDecoder('utf8');
+        stream.on('data', (chunk) => entry.handlers.onData(outDecoder.write(chunk)));
+        stream.stderr.on('data', (chunk) => entry.handlers.onData(errDecoder.write(chunk)));
+        stream.on('close', () => this._finishSession(sessionId, 'closed', 'Phiên đã đóng'));
+        if (conn.defaultDirectory && conn.defaultDirectory.trim()) {
+          const directory = conn.defaultDirectory.trim().replace(/'/g, `'"'"'`);
+          stream.write("cd -- '" + directory + "'\n");
+        }
+        if (runOnConnect && conn.onConnect && conn.onConnect.trim()) stream.write(conn.onConnect.trim() + '\n');
+      },
+    );
+  }
+
+  _buildConfig(conn) {
     const host = validateHost(conn.host);
     const port = validatePort(conn.port);
     const username = validateUsername(conn.username);
@@ -320,6 +405,22 @@ class SshManager {
     if (entry && entry.stream) entry.stream.setWindow(rows, cols, 0, 0);
   }
 
+  /**
+   * Phanh dòng dữ liệu từ máy chủ khi giao diện chưa vẽ kịp. Không có nó thì
+   * `cat` một file lớn sẽ nhồi IPC nhanh hơn xterm tiêu thụ.
+   */
+  setFlow(sessionId, paused) {
+    const entry = this.sessions.get(sessionId);
+    if (!entry || !entry.stream) return false;
+    try {
+      if (paused) entry.stream.pause();
+      else entry.stream.resume();
+    } catch {
+      return false;
+    }
+    return true;
+  }
+
   probeMetrics(sessionId) {
     sessionId = validateId(sessionId, 'Session ID');
     const entry = this.sessions.get(sessionId);
@@ -364,32 +465,23 @@ class SshManager {
       );
     });
 
-    return new Promise((resolve, reject) => {
-      const onError = (err) => {
-        server.close();
-        reject(new Error('Không mở được local port: ' + err.message));
-      };
-      server.once('error', onError);
-      server.listen({ host: bindHost, port: localPort, exclusive: true }, () => {
-        server.removeListener('error', onError);
-        server.on('error', () => this.stopTunnel(id));
-        const address = server.address();
-        const tunnel = {
-          id,
-          sessionId,
-          type: 'local',
-          bindHost,
-          localPort: address.port,
-          destinationHost,
-          destinationPort,
-          server,
-          sockets,
-          channels,
-        };
-        this.tunnels.set(id, tunnel);
-        resolve(this._safeTunnel(tunnel));
-      });
-    });
+    return this._listenTunnel(
+      server,
+      {
+        id,
+        sessionId,
+        hostId: this._hostIdOf(sessionId),
+        type: 'local',
+        bindHost,
+        localPort,
+        destinationHost,
+        destinationPort,
+        server,
+        sockets,
+        channels,
+      },
+      'local port',
+    );
   }
 
   startDynamicTunnel(sessionId, input) {
@@ -494,6 +586,7 @@ class SshManager {
       {
         id,
         sessionId,
+        hostId: this._hostIdOf(sessionId),
         type: 'dynamic',
         bindHost,
         localPort,
@@ -529,6 +622,7 @@ class SshManager {
         const tunnel = {
           id,
           sessionId,
+          hostId: this._hostIdOf(sessionId),
           type: 'remote',
           bindHost,
           remotePort: assignedPort || remotePort,
@@ -581,9 +675,11 @@ class SshManager {
     };
   }
 
+  /** Tunnel thuộc về kết nối SSH, nên mọi pane của cùng máy chủ đều thấy nó. */
   listTunnels(sessionId) {
+    const hostId = sessionId ? this._hostIdOf(sessionId) : null;
     return [...this.tunnels.values()]
-      .filter((tunnel) => !sessionId || tunnel.sessionId === sessionId)
+      .filter((tunnel) => !hostId || tunnel.hostId === hostId)
       .map((tunnel) => this._safeTunnel(tunnel));
   }
 
@@ -595,23 +691,33 @@ class SshManager {
     for (const socket of tunnel.sockets) socket.destroy();
     for (const channel of tunnel.channels) channel.destroy();
     if (tunnel.type === 'remote') {
+      const host = this.hosts.get(tunnel.hostId);
+      if (host) host.remoteTunnels.delete(id);
       const entry = this.sessions.get(tunnel.sessionId);
       if (entry && entry.remoteTunnels) entry.remoteTunnels.delete(id);
       try {
         tunnel.client.unforwardIn(tunnel.bindHost, tunnel.remotePort, () => {});
-      } catch {}
+      } catch {
+        // client có thể đã đóng, forward tự tiêu khi kết nối kết thúc
+      }
     } else {
       try {
         tunnel.server.close();
-      } catch {}
+      } catch {
+        // listener có thể đã đóng, bỏ qua
+      }
     }
     return true;
   }
 
-  stopSessionTunnels(sessionId) {
+  stopHostTunnels(hostId) {
     for (const tunnel of [...this.tunnels.values()]) {
-      if (tunnel.sessionId === sessionId) this.stopTunnel(tunnel.id);
+      if (tunnel.hostId === hostId) this.stopTunnel(tunnel.id);
     }
+  }
+
+  stopSessionTunnels(sessionId) {
+    this.stopHostTunnels(this._hostIdOf(sessionId));
   }
 
   disconnect(sessionId) {
@@ -619,10 +725,8 @@ class SshManager {
     if (!entry) return;
     try {
       if (entry.stream) entry.stream.end();
-      entry.client.end();
-      if (entry.jumpClient) entry.jumpClient.end();
     } catch {
-      // client có thể đã đóng, bỏ qua
+      // stream có thể đã đóng, bỏ qua
     }
     this._cleanup(sessionId);
   }
@@ -631,28 +735,54 @@ class SshManager {
     for (const id of [...this.sessions.keys()]) this.disconnect(id);
   }
 
+  _wipeSecrets(conn) {
+    if (!conn) return;
+    conn.password = undefined;
+    conn.passphrase = undefined;
+    if (conn.jumpHost) {
+      conn.jumpHost.password = undefined;
+      conn.jumpHost.passphrase = undefined;
+    }
+  }
+
+  /**
+   * Gỡ một pane. Kết nối SSH bên dưới chỉ bị đóng khi pane cuối cùng của nó
+   * biến mất, nếu không thì đóng một pane sẽ giết luôn các pane anh em.
+   */
   _cleanup(sessionId) {
     const entry = this.sessions.get(sessionId);
     if (!entry) return;
-    this.stopSessionTunnels(sessionId);
+    this.sessions.delete(sessionId);
     for (const handler of this.cleanupHandlers) {
       try {
         handler(sessionId);
-      } catch {}
-    }
-    // Xoá bản sao bí mật khỏi RAM khi phiên kết thúc
-    if (entry.conn) {
-      entry.conn.password = undefined;
-      entry.conn.passphrase = undefined;
-      if (entry.conn.jumpHost) {
-        entry.conn.jumpHost.password = undefined;
-        entry.conn.jumpHost.passphrase = undefined;
+      } catch {
+        // handler dọn dẹp không được phép chặn việc đóng phiên
       }
     }
-    try {
-      if (entry.jumpClient) entry.jumpClient.end();
-    } catch {}
-    this.sessions.delete(sessionId);
+
+    const hostId = entry.hostId || sessionId;
+    const host = this.hosts.get(hostId);
+    if (host) {
+      host.refs.delete(sessionId);
+      if (host.refs.size > 0) return;
+      this.hosts.delete(hostId);
+    }
+    this.stopHostTunnels(hostId);
+    if (host) {
+      try {
+        host.client.end();
+      } catch {
+        // client có thể đã đóng, bỏ qua
+      }
+      try {
+        if (host.jumpClient) host.jumpClient.end();
+      } catch {
+        // jump client có thể đã đóng, bỏ qua
+      }
+      // Xoá bản sao bí mật khỏi RAM khi kết nối kết thúc
+      this._wipeSecrets(host.conn);
+    }
   }
 }
 

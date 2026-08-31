@@ -13,14 +13,39 @@ function makeSalt() {
 }
 
 /**
+ * Đọc tham số KDF ghi kèm trong file kho/backup.
+ *
+ * Kho luôn mang theo tham số đã dùng để tạo nó. Nhờ vậy, ngày nào tăng chi phí
+ * scrypt cho kho mới, kho cũ vẫn mở được bằng đúng tham số của nó thay vì báo
+ * "sai master password" — một lỗi vừa sai vừa không cứu được.
+ *
+ * @param {unknown} value trường `params` đọc từ file
+ * @returns {{N: number, r: number, p: number, maxmem: number}}
+ */
+function readParams(value) {
+  if (!value || typeof value !== 'object') return { ...SCRYPT_PARAMS };
+  const N = Number(value.N);
+  const r = Number(value.r);
+  const p = Number(value.p);
+  const powerOfTwo = Number.isInteger(N) && N >= 1024 && N <= 1048576 && (N & (N - 1)) === 0;
+  if (!powerOfTwo || !Number.isInteger(r) || r < 1 || r > 32 || !Number.isInteger(p) || p < 1 || p > 16) {
+    throw new Error('Tham số mã hoá của kho không hợp lệ');
+  }
+  // scrypt cần khoảng 128 * N * r byte; cộng biên để Node không từ chối.
+  const maxmem = Math.max(SCRYPT_PARAMS.maxmem, 256 * N * r);
+  return { N, r, p, maxmem };
+}
+
+/**
  * Dẫn xuất khoá AES từ master password bằng scrypt.
  * @param {string} password
  * @param {Buffer} salt
+ * @param {{N: number, r: number, p: number, maxmem: number}} [params]
  * @returns {Promise<Buffer>} khoá 32 byte
  */
-function deriveKey(password, salt) {
+function deriveKey(password, salt, params = SCRYPT_PARAMS) {
   return new Promise((resolve, reject) => {
-    crypto.scrypt(password, salt, KEY_LEN, SCRYPT_PARAMS, (err, key) => {
+    crypto.scrypt(password, salt, KEY_LEN, params, (err, key) => {
       if (err) reject(err);
       else resolve(key);
     });
@@ -56,4 +81,4 @@ function wipe(buf) {
   if (Buffer.isBuffer(buf)) buf.fill(0);
 }
 
-module.exports = { makeSalt, deriveKey, encrypt, decrypt, wipe, SCRYPT_PARAMS };
+module.exports = { makeSalt, deriveKey, encrypt, decrypt, wipe, readParams, SCRYPT_PARAMS };
