@@ -27,6 +27,8 @@ const api = {
     save: (conn) => ipcRenderer.invoke('conn:save', conn),
     remove: (id) => ipcRenderer.invoke('conn:delete', id),
     duplicate: (id) => ipcRenderer.invoke('conn:duplicate', id),
+    saveTunnel: (connectionId, tunnel) => ipcRenderer.invoke('conn:saveTunnel', connectionId, tunnel),
+    deleteTunnel: (connectionId, tunnelId) => ipcRenderer.invoke('conn:deleteTunnel', connectionId, tunnelId),
   },
 
   snippets: {
@@ -62,6 +64,34 @@ const api = {
   knownHosts: {
     list: () => ipcRenderer.invoke('knownHosts:list'),
     forget: (host) => ipcRenderer.invoke('knownHosts:forget', host),
+  },
+
+  sftp: {
+    list: (sessionId, remotePath) => ipcRenderer.invoke('sftp:list', sessionId, remotePath),
+    mkdir: (sessionId, parentPath, name) => ipcRenderer.invoke('sftp:mkdir', sessionId, parentPath, name),
+    rename: (sessionId, remotePath, newName) => ipcRenderer.invoke('sftp:rename', sessionId, remotePath, newName),
+    remove: (sessionId, remotePath, isDirectory) => ipcRenderer.invoke('sftp:remove', sessionId, remotePath, isDirectory),
+    chmod: (sessionId, remotePath, mode) => ipcRenderer.invoke('sftp:chmod', sessionId, remotePath, mode),
+    upload: (sessionId, remoteDirectory) => ipcRenderer.invoke('sftp:upload', sessionId, remoteDirectory),
+    download: (sessionId, remotePath) => ipcRenderer.invoke('sftp:download', sessionId, remotePath),
+    cancel: (transferId) => ipcRenderer.invoke('sftp:cancel', transferId),
+    onProgress: (handler) => {
+      const listener = (_event, progress) => handler(progress);
+      ipcRenderer.on('sftp:progress', listener);
+      return () => ipcRenderer.removeListener('sftp:progress', listener);
+    },
+  },
+
+  tunnels: {
+    list: (sessionId) => ipcRenderer.invoke('tunnel:list', sessionId),
+    start: (sessionId, config) => ipcRenderer.invoke('tunnel:start', sessionId, config),
+    stop: (tunnelId) => ipcRenderer.invoke('tunnel:stop', tunnelId),
+  },
+
+  logs: {
+    status: (sessionId) => ipcRenderer.invoke('log:status', sessionId),
+    start: (sessionId) => ipcRenderer.invoke('log:start', sessionId),
+    stop: (sessionId) => ipcRenderer.invoke('log:stop', sessionId),
   },
 
   // Cửa sổ không khung: trang tự vẽ nút thu nhỏ / phóng to / đóng

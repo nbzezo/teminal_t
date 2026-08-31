@@ -53,6 +53,9 @@ const state = {
   paletteIndex: 0,
   paletteItems: [],
   settings: { autoLockMinutes: 15 },
+  sftpPath: '/',
+  sftpRoot: '/',
+  activeTransferId: null,
 };
 
 /* =========================================================================
@@ -588,6 +591,7 @@ function openConnectionModal(connId) {
   $('f-keypath').value = conn ? conn.privateKeyPath : '';
   $('f-onconnect').value = conn ? conn.onConnect || '' : '';
   $('f-default-directory').value = conn ? conn.defaultDirectory || '' : '';
+  $('f-sftp-root').value = conn ? conn.sftpRoot || '/' : '/';
   $('f-timeout').value = conn ? conn.connectTimeout || 20000 : 20000;
   $('f-keepalive').value = conn ? conn.keepaliveInterval ?? 20000 : 20000;
   $('f-notes').value = conn ? conn.notes || '' : '';
@@ -642,6 +646,7 @@ $('conn-form').addEventListener('submit', async (event) => {
     passphrase: $('f-passphrase').value,
     onConnect: $('f-onconnect').value,
     defaultDirectory: $('f-default-directory').value,
+    sftpRoot: $('f-sftp-root').value,
     connectTimeout: $('f-timeout').value,
     keepaliveInterval: $('f-keepalive').value,
     notes: $('f-notes').value,
@@ -808,6 +813,7 @@ async function openSettings() {
   const info = await call(bridge.app.info());
   state.settings = await call(bridge.vault.settings());
   $('auto-lock-minutes').value = state.settings.autoLockMinutes;
+  $('clipboard-clear-seconds').value = state.settings.clipboardClearSeconds;
   const list = $('app-info');
   list.textContent = '';
   const rows = [
@@ -882,7 +888,10 @@ $('security-settings-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     state.settings = await call(
-      bridge.vault.saveSettings({ autoLockMinutes: Number($('auto-lock-minutes').value) })
+      bridge.vault.saveSettings({
+        autoLockMinutes: Number($('auto-lock-minutes').value),
+        clipboardClearSeconds: Number($('clipboard-clear-seconds').value),
+      })
     );
     scheduleAutoLock();
     setStatus('Đã lưu thời gian tự khoá.', 'ok');
@@ -959,6 +968,215 @@ $('btn-import').addEventListener('click', async () => {
   }
 });
 
+function activeConnectedSession() {
+  const session = state.sessions.get(state.activeSessionId);
+  if (!session || session.status !== 'connected') {
+    setStatus('Hãy chọn một phiên SSH đã kết nối.', 'error');
+    return null;
+  }
+  return session;
+}
+
+async function loadSftp(remotePath) {
+  const session = activeConnectedSession();
+  if (!session) return;
+  clearError('sftp-error');
+  try {
+    const result = await call(bridge.sftp.list(state.activeSessionId, remotePath));
+    state.sftpPath = result.path;
+    state.sftpRoot = result.root;
+    $('sftp-path').value = result.path;
+    const list = $('sftp-list');
+    list.textContent = '';
+    const sorted = [...result.items].sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const item of sorted) {
+      const row = document.createElement('div');
+      row.className = 'sftp-row';
+      const name = document.createElement('button');
+      name.type = 'button';
+      name.className = 'sftp-name';
+      name.textContent = (item.type === 'directory' ? '📁 ' : '📄 ') + item.name;
+      const fullPath = result.path.replace(/\/$/, '') + '/' + item.name;
+      name.addEventListener('click', () => {
+        if (item.type === 'directory') loadSftp(fullPath);
+        else bridge.sftp.download(state.activeSessionId, fullPath).then(call).then((value) => {
+          if (!value.canceled) {
+            $('sftp-progress-row').hidden = true;
+            state.activeTransferId = null;
+            setStatus('Đã tải file xuống.', 'ok');
+          }
+        }).catch((err) => setStatus(err.message, 'error'));
+      });
+      const meta = document.createElement('span');
+      meta.className = 'sftp-meta';
+      meta.textContent = item.type === 'directory' ? 'thư mục' : item.size + ' B';
+      const actions = document.createElement('div');
+      actions.className = 'row-inline';
+      const rename = document.createElement('button');
+      rename.type = 'button';
+      rename.className = 'btn btn-flat btn-sm';
+      rename.textContent = 'Đổi tên';
+      rename.addEventListener('click', async () => {
+        const next = window.prompt('Tên mới', item.name);
+        if (!next || next === item.name) return;
+        try { await call(bridge.sftp.rename(state.activeSessionId, fullPath, next)); await loadSftp(result.path); }
+        catch (err) { showError('sftp-error', err.message); }
+      });
+      const chmod = document.createElement('button');
+      chmod.type = 'button';
+      chmod.className = 'btn btn-flat btn-sm';
+      chmod.textContent = 'Quyền';
+      chmod.addEventListener('click', async () => {
+        const mode = window.prompt('Permission dạng bát phân, ví dụ 644', '644');
+        if (!mode) return;
+        try { await call(bridge.sftp.chmod(state.activeSessionId, fullPath, mode)); setStatus('Đã đổi permission.', 'ok'); }
+        catch (err) { showError('sftp-error', err.message); }
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn-destructive btn-sm';
+      remove.textContent = 'Xoá';
+      remove.addEventListener('click', async () => {
+        try {
+          const removed = await call(bridge.sftp.remove(state.activeSessionId, fullPath, item.type === 'directory'));
+          if (removed) await loadSftp(result.path);
+        } catch (err) { showError('sftp-error', err.message); }
+      });
+      actions.append(rename, chmod, remove);
+      row.append(name, meta, actions);
+      list.appendChild(row);
+    }
+  } catch (err) {
+    showError('sftp-error', err.message);
+  }
+}
+
+$('btn-sftp').addEventListener('click', async () => {
+  const session = activeConnectedSession();
+  if (!session) return;
+  const conn = state.connections.find((item) => item.id === session.connId);
+  state.sftpPath = (conn && conn.sftpRoot) || '/';
+  openModal('sftp-modal');
+  await loadSftp(state.sftpPath);
+});
+$('sftp-refresh').addEventListener('click', () => loadSftp($('sftp-path').value));
+$('sftp-path').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); loadSftp(event.target.value); }
+});
+$('sftp-up').addEventListener('click', () => {
+  if (state.sftpPath === state.sftpRoot) return;
+  const parts = state.sftpPath.split('/').filter(Boolean);
+  parts.pop();
+  const parent = '/' + parts.join('/');
+  loadSftp(parent.length < state.sftpRoot.length ? state.sftpRoot : parent);
+});
+$('sftp-upload').addEventListener('click', async () => {
+  try {
+    const result = await call(bridge.sftp.upload(state.activeSessionId, state.sftpPath));
+    if (!result.canceled) { $('sftp-progress-row').hidden = true; state.activeTransferId = null; setStatus('Upload hoàn tất.', 'ok'); await loadSftp(state.sftpPath); }
+  } catch (err) { showError('sftp-error', err.message); }
+});
+$('sftp-mkdir').addEventListener('click', async () => {
+  const name = window.prompt('Tên thư mục mới');
+  if (!name) return;
+  try { await call(bridge.sftp.mkdir(state.activeSessionId, state.sftpPath, name)); await loadSftp(state.sftpPath); }
+  catch (err) { showError('sftp-error', err.message); }
+});
+bridge.sftp.onProgress((progress) => {
+  if (progress.sessionId !== state.activeSessionId) return;
+  const percent = progress.total ? Math.round((progress.transferred / progress.total) * 100) : 0;
+  state.activeTransferId = progress.transferId;
+  $('sftp-progress-row').hidden = false;
+  $('sftp-progress').textContent = 'Đang truyền: ' + progress.transferred + '/' + progress.total + ' byte (' + percent + '%)';
+});
+$('sftp-cancel').addEventListener('click', async () => {
+  if (!state.activeTransferId) return;
+  try { await call(bridge.sftp.cancel(state.activeTransferId)); }
+  catch (err) { showError('sftp-error', err.message); }
+  state.activeTransferId = null;
+  $('sftp-progress-row').hidden = true;
+});
+
+async function renderTunnels() {
+  const session = activeConnectedSession();
+  if (!session) return;
+  const conn = state.connections.find((item) => item.id === session.connId);
+  const active = await call(bridge.tunnels.list(state.activeSessionId));
+  const activeById = new Map(active.map((item) => [item.id, item]));
+  const configs = [...((conn && conn.tunnels) || [])];
+  for (const item of active) if (!configs.some((saved) => saved.id === item.id)) configs.push(item);
+  const list = $('tunnel-list');
+  list.textContent = '';
+  for (const config of configs) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const label = document.createElement('span');
+    label.className = 'row-label';
+    label.textContent = '127.0.0.1:' + config.localPort + ' → ' + config.destinationHost + ':' + config.destinationPort;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-flat btn-sm';
+    button.textContent = activeById.has(config.id) ? 'Dừng' : 'Bật';
+    button.addEventListener('click', async () => {
+      try {
+        if (activeById.has(config.id)) await call(bridge.tunnels.stop(config.id));
+        else await call(bridge.tunnels.start(state.activeSessionId, config));
+        await renderTunnels();
+      } catch (err) { showError('tunnel-error', err.message); }
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-destructive btn-sm';
+    remove.textContent = 'Xoá';
+    remove.addEventListener('click', async () => {
+      if (activeById.has(config.id)) await call(bridge.tunnels.stop(config.id));
+      await call(bridge.connections.deleteTunnel(session.connId, config.id));
+      await refreshAll();
+      await renderTunnels();
+    });
+    row.append(label, button, remove);
+    list.appendChild(row);
+  }
+}
+
+$('btn-tunnels').addEventListener('click', async () => {
+  if (!activeConnectedSession()) return;
+  clearError('tunnel-error');
+  openModal('tunnel-modal');
+  await renderTunnels();
+});
+$('btn-session-log').addEventListener('click', async () => {
+  if (!activeConnectedSession()) return;
+  try {
+    const active = await call(bridge.logs.status(state.activeSessionId));
+    const changed = active
+      ? await call(bridge.logs.stop(state.activeSessionId))
+      : await call(bridge.logs.start(state.activeSessionId));
+    if (changed) setStatus(active ? 'Đã dừng ghi log.' : 'Đang ghi log phiên.', 'ok');
+  } catch (err) { setStatus(err.message, 'error'); }
+});
+$('tunnel-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const session = activeConnectedSession();
+  if (!session) return;
+  const config = {
+    name: 'Local ' + $('t-local-port').value,
+    localPort: Number($('t-local-port').value),
+    destinationHost: $('t-dest-host').value,
+    destinationPort: Number($('t-dest-port').value),
+  };
+  try {
+    const started = await call(bridge.tunnels.start(state.activeSessionId, config));
+    await call(bridge.connections.saveTunnel(session.connId, { ...config, id: started.id }));
+    await refreshAll();
+    await renderTunnels();
+    setStatus('Đã mở local tunnel.', 'ok');
+  } catch (err) { showError('tunnel-error', err.message); }
+});
+
 for (const button of document.querySelectorAll('[data-close]')) {
   button.addEventListener('click', () => closeModal(button.dataset.close));
 }
@@ -989,7 +1207,16 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     const session = state.sessions.get(state.activeSessionId);
     if (session && session.term.hasSelection()) {
-      navigator.clipboard.writeText(session.term.getSelection());
+      const copied = session.term.getSelection();
+      navigator.clipboard.writeText(copied);
+      const clearAfter = Number(state.settings.clipboardClearSeconds) || 0;
+      if (clearAfter > 0) {
+        setTimeout(async () => {
+          try {
+            if ((await navigator.clipboard.readText()) === copied) await navigator.clipboard.writeText('');
+          } catch {}
+        }, clearAfter * 1000);
+      }
       setStatus('Đã sao chép vùng chọn.', 'ok');
     }
     return;

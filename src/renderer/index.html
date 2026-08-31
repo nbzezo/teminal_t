@@ -118,6 +118,15 @@
           </div>
 
           <div class="hb-actions hb-actions-right">
+            <button id="btn-sftp" class="hb-btn" title="Quản lý file SFTP" aria-label="SFTP">
+              <span aria-hidden="true">⇄</span>
+            </button>
+            <button id="btn-tunnels" class="hb-btn" title="Local port forwarding" aria-label="Tunnel">
+              <span aria-hidden="true">↔</span>
+            </button>
+            <button id="btn-session-log" class="hb-btn" title="Bật/tắt ghi log phiên" aria-label="Ghi log">
+              <span aria-hidden="true">●</span>
+            </button>
             <button id="btn-import" class="hb-btn" title="Nhập từ ~/.ssh/config" aria-label="Nhập config">
               <svg viewBox="0 0 16 16" width="16" height="16">
                 <path fill="currentColor" d="M8 1.75a.75.75 0 0 1 .75.75v5.19l1.72-1.72a.75.75 0 1 1 1.06 1.06l-3 3a.75.75 0 0 1-1.06 0l-3-3a.75.75 0 0 1 1.06-1.06l1.72 1.72V2.5A.75.75 0 0 1 8 1.75ZM2.75 10a.75.75 0 0 1 .75.75v1.75h9v-1.75a.75.75 0 0 1 1.5 0v2.5a.75.75 0 0 1-.75.75h-10.5a.75.75 0 0 1-.75-.75v-2.5a.75.75 0 0 1 .75-.75Z" />
@@ -319,6 +328,10 @@
               <input id="f-default-directory" type="text" placeholder="/var/www (chỉ lưu, không tự chạy)" />
             </label>
             <label class="row">
+              <span class="row-label">SFTP root</span>
+              <input id="f-sftp-root" type="text" value="/" placeholder="/home/user" />
+            </label>
+            <label class="row">
               <span class="row-label">Lệnh chạy khi kết nối</span>
               <input id="f-onconnect" type="text" placeholder="cd /var/www &amp;&amp; ls -la" />
             </label>
@@ -420,6 +433,10 @@
                 <span class="row-label">Khoá sau khi không hoạt động (phút)</span>
                 <input id="auto-lock-minutes" type="number" min="1" max="240" value="15" />
               </label>
+              <label class="row">
+                <span class="row-label">Xoá clipboard sau (giây, 0 = tắt)</span>
+                <input id="clipboard-clear-seconds" type="number" min="0" max="300" value="30" />
+              </label>
             </div>
             <button type="submit" class="btn btn-flat btn-sm">Lưu bảo mật</button>
           </form>
@@ -456,6 +473,52 @@
           <span class="spacer"></span>
           <button type="button" class="btn btn-flat" data-close="settings-modal">Đóng</button>
         </footer>
+      </div>
+    </div>
+
+    <!-- ===================== Trình quản lý SFTP ===================== -->
+    <div id="sftp-modal" class="overlay" hidden>
+      <div class="dialog dialog-wide">
+        <header class="dialog-head">
+          <h2>Quản lý file SFTP</h2>
+        </header>
+        <div class="dialog-body">
+          <div id="sftp-error" class="banner banner-error" hidden></div>
+          <div class="sftp-toolbar">
+            <button id="sftp-up" type="button" class="btn btn-flat btn-sm">Lên một cấp</button>
+            <input id="sftp-path" type="text" value="/" aria-label="Đường dẫn remote" />
+            <button id="sftp-refresh" type="button" class="btn btn-flat btn-sm">Làm mới</button>
+            <button id="sftp-upload" type="button" class="btn btn-suggested btn-sm">Upload</button>
+            <button id="sftp-mkdir" type="button" class="btn btn-flat btn-sm">Thư mục mới</button>
+          </div>
+          <div id="sftp-progress-row" class="row-inline" hidden>
+            <span id="sftp-progress" class="dim"></span>
+            <button id="sftp-cancel" type="button" class="btn btn-flat btn-sm">Huỷ truyền</button>
+          </div>
+          <div id="sftp-list" class="sftp-list"></div>
+        </div>
+        <footer class="dialog-foot">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-flat" data-close="sftp-modal">Đóng</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ===================== Local port forwarding ===================== -->
+    <div id="tunnel-modal" class="overlay" hidden>
+      <div class="dialog dialog-narrow">
+        <header class="dialog-head"><h2>Local port forwarding</h2></header>
+        <div class="dialog-body">
+          <div id="tunnel-error" class="banner banner-error" hidden></div>
+          <form id="tunnel-form" class="listbox">
+            <label class="row"><span class="row-label">Local port</span><input id="t-local-port" type="number" min="1" max="65535" required /></label>
+            <label class="row"><span class="row-label">Đích</span><input id="t-dest-host" type="text" placeholder="127.0.0.1" required /></label>
+            <label class="row"><span class="row-label">Port đích</span><input id="t-dest-port" type="number" min="1" max="65535" required /></label>
+            <div class="row"><span class="spacer"></span><button type="submit" class="btn btn-suggested btn-sm">Mở tunnel</button></div>
+          </form>
+          <div id="tunnel-list" class="listbox"></div>
+        </div>
+        <footer class="dialog-foot"><span class="spacer"></span><button type="button" class="btn btn-flat" data-close="tunnel-modal">Đóng</button></footer>
       </div>
     </div>
 

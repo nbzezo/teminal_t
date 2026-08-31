@@ -7,12 +7,23 @@ const { Vault } = require('./vault');
 const { SshManager, KnownHosts, detectAgent } = require('./ssh-manager');
 const { currentPlatform } = require('./platform');
 const { inspectCommand, safeErrorMessage, validateId, clampTerminalSize } = require('./validation');
+const { SftpService } = require('./sftp-service');
 
 const isDev = process.argv.includes('--dev');
 
 let mainWindow = null;
 let vault = null;
 let ssh = null;
+let sftp = null;
+const sessionLogs = new Map();
+
+function stopSessionLog(sessionId) {
+  const stream = sessionLogs.get(sessionId);
+  if (!stream) return false;
+  sessionLogs.delete(sessionId);
+  stream.end();
+  return true;
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -170,6 +181,8 @@ function registerIpc() {
   handle('conn:save', (conn) => vault.saveConnection(conn));
   handle('conn:delete', (id) => vault.deleteConnection(id));
   handle('conn:duplicate', (id) => vault.duplicateConnection(id));
+  handle('conn:saveTunnel', (connectionId, tunnel) => vault.saveTunnel(connectionId, tunnel));
+  handle('conn:deleteTunnel', (connectionId, tunnelId) => vault.deleteTunnel(connectionId, tunnelId));
 
   handle('snip:list', () => vault.listSnippets());
   handle('snip:save', (snippet) => vault.saveSnippet(snippet));
@@ -222,9 +235,16 @@ function registerIpc() {
       { ...conn },
       clampTerminalSize(size),
       {
-        onData: (data) => send('ssh:data', data),
+        onData: (data) => {
+          send('ssh:data', data);
+          const log = sessionLogs.get(sessionId);
+          if (log) log.write(data);
+        },
         onStatus: (status) => send('ssh:status', status),
-        onClose: () => send('ssh:status', { state: 'gone' }),
+        onClose: () => {
+          stopSessionLog(sessionId);
+          send('ssh:status', { state: 'gone' });
+        },
       }
     );
     vault.touchConnection(connectionId);
@@ -262,6 +282,104 @@ function registerIpc() {
     ssh.knownHosts.forget(String(host));
     return true;
   });
+
+  handle('sftp:list', (sessionId, remotePath) => sftp.list(sessionId, remotePath));
+  handle('sftp:mkdir', (sessionId, parentPath, name) => sftp.mkdir(sessionId, parentPath, name));
+  handle('sftp:rename', (sessionId, remotePath, newName) => sftp.rename(sessionId, remotePath, newName));
+  handle('sftp:chmod', (sessionId, remotePath, mode) => sftp.chmod(sessionId, remotePath, mode));
+  handle('sftp:remove', async (sessionId, remotePath, isDirectory) => {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Xác nhận xoá remote',
+      message: 'Xoá ' + (isDirectory ? 'thư mục' : 'file') + ' này?',
+      detail: String(remotePath),
+      buttons: ['Huỷ', 'Xoá'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (response !== 1) return false;
+    return sftp.remove(sessionId, remotePath, isDirectory);
+  });
+  handle('sftp:upload', async (sessionId, remoteDirectory) => {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Chọn file để upload',
+      properties: ['openFile'],
+    });
+    if (picked.canceled || !picked.filePaths[0]) return { canceled: true };
+    const localPath = picked.filePaths[0];
+    const remotePath = path.posix.join(String(remoteDirectory), path.basename(localPath));
+    const existing = await sftp.stat(sessionId, remotePath);
+    let overwrite = false;
+    if (existing.exists) {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'File remote đã tồn tại',
+        message: 'Ghi đè file remote?',
+        detail: existing.path,
+        buttons: ['Huỷ', 'Ghi đè'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (response !== 1) return { canceled: true };
+      overwrite = true;
+    }
+    const result = await sftp.upload(
+      sessionId,
+      localPath,
+      remoteDirectory,
+      (progress) => mainWindow && mainWindow.webContents.send('sftp:progress', progress),
+      overwrite
+    );
+    return { canceled: false, ...result };
+  });
+  handle('sftp:download', async (sessionId, remotePath) => {
+    const picked = await dialog.showSaveDialog(mainWindow, {
+      title: 'Lưu file tải xuống',
+      defaultPath: path.basename(String(remotePath)),
+    });
+    if (picked.canceled || !picked.filePath) return { canceled: true };
+    const result = await sftp.download(
+      sessionId,
+      remotePath,
+      picked.filePath,
+      (progress) => mainWindow && mainWindow.webContents.send('sftp:progress', progress)
+    );
+    return { canceled: false, ...result };
+  });
+  handle('sftp:cancel', (transferId) => sftp.cancel(transferId));
+
+  handle('tunnel:list', (sessionId) => ssh.listTunnels(sessionId));
+  handle('tunnel:start', (sessionId, config) => ssh.startLocalTunnel(sessionId, config));
+  handle('tunnel:stop', (tunnelId) => ssh.stopTunnel(tunnelId));
+
+  handle('log:status', (sessionId) => sessionLogs.has(validateId(sessionId, 'Session ID')));
+  handle('log:start', async (sessionId) => {
+    validateId(sessionId, 'Session ID');
+    if (!ssh.has(sessionId)) throw new Error('Phiên SSH không tồn tại');
+    if (sessionLogs.has(sessionId)) return true;
+    const warning = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Ghi log phiên SSH',
+      message: 'Log terminal có thể chứa mật khẩu, token hoặc dữ liệu nhạy cảm.',
+      detail: 'Chỉ bật khi thật sự cần và tự bảo vệ file log sau khi sử dụng.',
+      buttons: ['Huỷ', 'Tôi hiểu, chọn file'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (warning.response !== 1) return false;
+    const picked = await dialog.showSaveDialog(mainWindow, {
+      title: 'Lưu log phiên SSH',
+      defaultPath: 'ssh-session-' + new Date().toISOString().replace(/[:.]/g, '-') + '.log',
+      filters: [{ name: 'Terminal log', extensions: ['log', 'txt'] }],
+    });
+    if (picked.canceled || !picked.filePath) return false;
+    sessionLogs.set(sessionId, fs.createWriteStream(picked.filePath, { flags: 'wx', mode: 0o600 }));
+    return true;
+  });
+  handle('log:stop', (sessionId) => stopSessionLog(validateId(sessionId, 'Session ID')));
 
   handle('dialog:pickPrivateKey', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -329,6 +447,7 @@ if (!app.requestSingleInstanceLock()) {
     const userData = app.getPath('userData');
     vault = new Vault(path.join(userData, 'vault.enc'));
     ssh = new SshManager(new KnownHosts(path.join(userData, 'known_hosts.json')), confirmHostKey);
+    sftp = new SftpService(ssh);
 
     registerIpc();
     buildMenu();
@@ -346,6 +465,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('before-quit', () => {
+    for (const sessionId of [...sessionLogs.keys()]) stopSessionLog(sessionId);
     if (ssh) ssh.disconnectAll();
     if (vault) vault.lock();
   });

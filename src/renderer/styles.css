@@ -1068,6 +1068,56 @@ textarea::placeholder {
   overflow-y: auto;
   padding: 18px 20px 4px;
 }
+
+.dialog-wide {
+  width: min(920px, calc(100vw - 48px));
+}
+
+.sftp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.sftp-toolbar input {
+  flex: 1;
+}
+.sftp-list {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: auto;
+  min-height: 280px;
+  max-height: 54vh;
+}
+.sftp-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 100px auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 10px;
+}
+.sftp-row + .sftp-row {
+  border-top: 1px solid var(--separator);
+}
+.sftp-name {
+  border: 0;
+  background: transparent;
+  color: var(--window-fg);
+  text-align: left;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sftp-name:hover {
+  color: var(--accent);
+}
+.sftp-meta {
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 .dialog-foot {
   flex-shrink: 0;
   display: flex;

@@ -13,7 +13,7 @@ Không sử dụng credential thật, không kết nối ra ngoài và không ch
   và TOFU host-key verification trong `known_hosts.json`.
 - `src/main/preload.js` là API duy nhất cho renderer; `sandbox`, `contextIsolation` bật và
   `nodeIntegration` tắt. Renderer không nhận password/passphrase đã lưu.
-- Baseline trước sửa: `npm test` đạt 126/126. Sau sửa: `npm test` đạt 144/144, gồm unit,
+- Baseline trước sửa: `npm test` đạt 126/126. Sau phase SFTP/tunnel: `npm test` đạt 155/155, gồm unit,
   SSH loopback, Electron UI, IME và theme sáng/tối.
 
 ## Ma trận tính năng
@@ -42,8 +42,8 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 | C | Terminal tích hợp, nhiều tab | Đã hoàn chỉnh. | xterm + Fit/Search addon; UI/SSH/UTF-8 tests | P1 | Escape sequence không tin cậy | xterm xử lý; không render terminal bằng HTML |
 | C | Chia cửa sổ | Chưa có. | Mỗi tab chỉ có một `.term-pane` | P3 | Tăng phức tạp lifecycle | Thiết kế cây split ở renderer |
 | C | Font/cỡ/màu/theme tùy chỉnh | Có nhưng chưa hoàn chỉnh. | Theme/font hiện hard-code, có light/dark system | P2 | Không đáng kể | Lưu terminal profile trong vault settings |
-| C | Copy/paste/tìm kiếm/Unicode/shortcut | Đã hoàn chỉnh. | `app.js`; UTF-8, IME, UI, theme tests baseline | P1 | Clipboard chứa secret | Thêm clear clipboard opt-in |
-| C | Ghi log phiên opt-in | Chưa có. | Không có recorder/file writer | P2 | Log chứa secret | Mặc định tắt, warning + file permission 0600 |
+| C | Copy/paste/tìm kiếm/Unicode/shortcut | Đã hoàn chỉnh. | `app.js`; UTF-8, IME, UI, theme tests; clipboard auto-clear | P1 | Clipboard chứa secret | Clear chỉ khi clipboard chưa đổi |
+| C | Ghi log phiên opt-in | Đã hoàn chỉnh. | Main-process stream, warning bắt buộc, mode 0600, teardown theo phiên | P2 | Log chứa secret | Mặc định tắt; người dùng tự bảo vệ file log |
 | D | Import SSH key | Có nhưng chưa hoàn chỉnh. | Chọn đường dẫn/key từ ssh config; không copy vào managed store | P1 | Key path mất/permission sai | Thêm key metadata store, không hiển thị nội dung |
 | D | Tạo/quản lý public-private key/fingerprint | Chưa có. | Không có key service/UI | P2 | Thuật toán yếu/xóa nhầm | Dùng `ssh-keygen` qua `execFile`, Ed25519 mặc định |
 | D | Một key cho nhiều máy chủ | Đã hoàn chỉnh. | Nhiều record có thể dùng cùng `privateKeyPath` | P1 | Thay key ảnh hưởng nhiều host | Hiển thị usage count khi có key manager |
@@ -58,10 +58,10 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 | E | Xác nhận lần đầu/lưu trusted key | Đã hoàn chỉnh. | `confirmHostKey`; `KnownHosts.set`; integration test | P0 | Tin nhầm host | Hướng dẫn đối chiếu out-of-band |
 | E | Cảnh báo khi fingerprint đổi | Đã hoàn chỉnh. | Dialog severity warning; changed-key integration test | P0 | MITM | Main process chặn mặc định |
 | E | Xem/quản lý trusted keys | Đã hoàn chỉnh. | Settings `known-hosts-list`; `KnownHosts.list/forget` | P1 | Quên nhầm key | Có confirm trước khi quên |
-| F | Duyệt local/remote, upload/download | Chưa có. | Không có SFTP service/UI | P1 | Path traversal/overwrite | Service riêng, canonical remote POSIX path, allowlisted roots |
+| F | Duyệt local/remote, upload/download | Đã hoàn chỉnh. | `SftpService`, file dialogs, progress; `sftp.test.js` | P1 | Path traversal/overwrite | Local browse dùng native dialog; transfer ghi qua file tạm |
 | F | Progress/cancel/retry/drag-drop | Chưa có. | Không có transfer model | P2 | Task mồ côi | Transfer queue có AbortController |
-| F | Mkdir/rename/move/delete/edit/chmod | Chưa có. | Không có SFTP mutation API | P2 | Mất dữ liệu | Confirm destructive action và optimistic-lock edit |
-| F | Chống path traversal/phạm vi | Không phù hợp với kiến trúc hiện tại. | Chưa có SFTP/file API để áp dụng | P0 | Path traversal tương lai | Bắt buộc thiết kế trước khi thêm SFTP IPC |
+| F | Mkdir/rename/delete/chmod | Đã hoàn chỉnh. | SFTP UI/API; delete confirmation; scope guard | P2 | Mất dữ liệu | Move khác thư mục và quick-edit vẫn ở backlog |
+| F | Chống path traversal/phạm vi | Đã hoàn chỉnh. | `remote-path.js`, configured `sftpRoot`, traversal tests | P0 | Truy cập ngoài scope | Không tin path từ renderer |
 | G | Lưu snippet | Đã hoàn chỉnh. | Vault + renderer CRUD | P1 | Command nguy hiểm | Default auto-run đã đổi thành false |
 | G | Nhóm/tìm kiếm snippet | Có nhưng chưa hoàn chỉnh. | Có field `group`; chưa có search/filter UI | P2 | Khó quản lý | Thêm panel thư viện thay cho chip bar |
 | G | Biến `${name}` | Chưa có. | Không có parser/template UI | P2 | Injection qua biến | Typed variables + preview, không shell interpolate tự do |
@@ -70,7 +70,8 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 | G | Không tự chạy lệnh AI | Đã hoàn chỉnh. | Không tích hợp AI; mọi auto-run có confirm | P0 | Remote code execution | Duy trì invariant nếu thêm AI |
 | G | Lịch sử thực thi đã che secret | Chưa có. | Không có execution history | P2 | Secret trong history | Structured record + redaction, opt-out |
 | G | Chạy đa máy có kiểm soát | Chưa có. | Không có broadcast executor | P3 | Blast radius lớn | Batch preview, concurrency cap, Production gate |
-| H | Local/remote/dynamic forwarding | Chưa có. | Không có tunnel model/API | P1/P2 | Port exposure, leaked listener | Local bind loopback mặc định; lifecycle gắn session |
+| H | Local forwarding | Đã hoàn chỉnh. | `startLocalTunnel`, persistent config/UI; `tunnel.test.js` | P1 | Port exposure, leaked listener | Chỉ bind loopback; teardown gắn session |
+| H | Remote/dynamic forwarding | Chưa có. | Chưa có forwardIn/SOCKS handshake | P2 | Public exposure/proxy abuse | Remote bind opt-in; SOCKS auth/policy |
 | H | Lưu/bật/tắt/status/conflict/teardown | Chưa có. | Chỉ SSH sessions hiện hữu | P1 | Port conflict/tunnel mồ côi | Registry tunnel + preflight bind + integration test |
 | I | Online/latency/CPU/RAM/disk/uptime/load | Chưa có. | Không có probe service | P2 | Tạo tải/rò thông tin | Lệnh read-only theo OS, opt-in, timeout/caching |
 | I | Service/Docker status | Chưa có. | Không có probe/parser | P3 | Quyền cao/khác OS | Adapter capability detection; không cài agent |
@@ -84,7 +85,7 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 | K | Tự khóa khi idle | Đã hoàn chỉnh. | `scheduleAutoLock`, settings 1–240 phút | P0 | Vault mở khi rời máy | Thêm suspend/session-lock hook theo OS |
 | K | Không ghi credential vào log | Đã hoàn chỉnh. | Không có log secret; `safeErrorMessage`; disk tests | P0 | Credential disclosure | Thêm automated log-capture regression test |
 | K | Che secret trên UI | Đã hoàn chỉnh. | `_safe` loại password/passphrase; input type password | P0 | Shoulder surfing/DOM leak | Không thêm reveal mặc định |
-| K | Xóa clipboard sau timeout | Chưa có. | Clipboard chỉ copy/paste, không timer | P2 | Secret lưu clipboard | Opt-in, chỉ clear nếu nội dung chưa đổi |
+| K | Xóa clipboard sau timeout | Đã hoàn chỉnh. | Settings 0–300 giây; renderer so sánh trước khi clear | P2 | Secret lưu clipboard | Mặc định 30 giây |
 | K | Validation toàn bộ input nhạy cảm | Đã hoàn chỉnh. | `validation.js`, vault/SSH/IPC caps; tests | P0 | Injection/DoS | Mở rộng schema validator khi có SFTP/tunnel |
 | K | Chống command injection | Có nhưng chưa hoàn chỉnh. | Không gọi local shell; remote command được preview/confirm; terminal vẫn là shell chủ ý | P0 | Lệnh remote phá hoại | Typed snippet variables; bỏ auto `defaultDirectory` |
 | K | Chống path traversal | Không phù hợp với kiến trúc hiện tại. | Không có file API | P0 | Tương lai khi thêm SFTP | Canonicalize tại main, không tin renderer |
@@ -116,13 +117,12 @@ Trạng thái phản ánh chức năng chạy được và test, không suy lu�
 
 | Nội dung | Ưu tiên | Lý do chưa triển khai | Phương án kỹ thuật | Độ phức tạp |
 | -------- | ------- | -------------------- | ------------------ | ------------ |
-| SFTP cơ bản + traversal/overwrite guard | P1 | Cần model transfer, UI và test server SFTP; không nên ghép vội vào SSH shell | SFTP service main, remote POSIX path canonicalization, transfer queue/cancel | Lớn |
-| Local port forwarding | P1 | Cần listener registry và teardown đáng tin cậy | `net.Server` loopback + `ssh2.forwardOut`, conflict preflight, bind opt-in | Trung bình |
+| SFTP move/quick edit/drag-drop | P2 | Basic SFTP đã hoàn tất; thao tác nâng cao cần editor/UX riêng | Optimistic-lock editor, drag-drop target validation | Trung bình |
+| Remote/dynamic port forwarding | P2 | Local forwarding đã hoàn tất; hai mode này có blast radius lớn hơn | `forwardIn` policy + SOCKS5 parser và bind warning | Lớn |
 | SSH key manager | P1/P2 | Hiện app chỉ tham chiếu file key | Entity key metadata, fingerprint, `execFile(ssh-keygen)`, usage graph | Lớn |
 | OS credential store | P2 | Cần adapter và dependency native đa nền tảng | Credential Manager/Keychain/Secret Service; vault fallback | Lớn |
 | Jump host/ProxyJump | P2 | Host-key verification phải áp dụng riêng từng hop | Client chain qua `forwardOut`, known-host namespace theo hop | Lớn |
 | Reconnect có kiểm soát | P2 | Không được chạy lại command/Production action ngoài ý muốn | Backoff opt-in, session state machine, no auto replay | Trung bình |
-| Session logging | P2 | Nguy cơ lưu secret cao | Opt-in per session, warning, 0600, redaction/bounded file | Trung bình |
 | Snippet variables/search/history | P2 | Cần UX preview và redaction | Typed placeholders, preview dialog, masked execution metadata | Trung bình |
 | Dashboard read-only | P2/P3 | Khác biệt OS và tạo tải lên host | Capability probes, timeout/cache, no remote agent | Lớn |
 | Split terminal | P3 | Tăng phức tạp focus/resize/session lifecycle | Renderer split tree, mỗi leaf một xterm/session | Lớn |

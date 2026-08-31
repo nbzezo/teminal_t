@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const net = require('net');
 const { StringDecoder } = require('string_decoder');
 const { Client } = require('ssh2');
 const { currentPlatform } = require('./platform');
@@ -90,10 +91,17 @@ class SshManager {
     this.knownHosts = knownHosts;
     this.confirmHostKey = confirmHostKey;
     this.sessions = new Map();
+    this.tunnels = new Map();
+    this.cleanupHandlers = new Set();
   }
 
   has(sessionId) {
     return this.sessions.has(sessionId);
+  }
+
+  onCleanup(handler) {
+    this.cleanupHandlers.add(handler);
+    return () => this.cleanupHandlers.delete(handler);
   }
 
   /**
@@ -244,6 +252,106 @@ class SshManager {
     if (entry && entry.stream) entry.stream.setWindow(rows, cols, 0, 0);
   }
 
+  startLocalTunnel(sessionId, input) {
+    sessionId = validateId(sessionId, 'Session ID');
+    const entry = this.sessions.get(sessionId);
+    if (!entry || !entry.stream) throw new Error('Phiên SSH chưa kết nối');
+    const id = input.id ? validateId(input.id, 'Tunnel ID') : crypto.randomUUID();
+    if (this.tunnels.has(id)) throw new Error('Tunnel đã tồn tại');
+    const bindHost = input.bindHost || '127.0.0.1';
+    if (!['127.0.0.1', '::1'].includes(bindHost)) {
+      throw new Error('Local tunnel chỉ được bind vào loopback');
+    }
+    const localPort = Number(input.localPort);
+    if (!Number.isInteger(localPort) || localPort < 0 || localPort > 65535) {
+      throw new Error('Local port phải từ 0 đến 65535');
+    }
+    const destinationHost = validateHost(input.destinationHost);
+    const destinationPort = validatePort(input.destinationPort);
+    const sockets = new Set();
+    const channels = new Set();
+    const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      entry.client.forwardOut(
+        socket.remoteAddress || '127.0.0.1',
+        socket.remotePort || 0,
+        destinationHost,
+        destinationPort,
+        (err, channel) => {
+          if (err) return socket.destroy();
+          channels.add(channel);
+          channel.on('close', () => channels.delete(channel));
+          channel.on('error', () => socket.destroy());
+          socket.on('error', () => channel.destroy());
+          socket.pipe(channel).pipe(socket);
+        }
+      );
+    });
+
+    return new Promise((resolve, reject) => {
+      const onError = (err) => {
+        server.close();
+        reject(new Error('Không mở được local port: ' + err.message));
+      };
+      server.once('error', onError);
+      server.listen({ host: bindHost, port: localPort, exclusive: true }, () => {
+        server.removeListener('error', onError);
+        server.on('error', () => this.stopTunnel(id));
+        const address = server.address();
+        const tunnel = {
+          id,
+          sessionId,
+          type: 'local',
+          bindHost,
+          localPort: address.port,
+          destinationHost,
+          destinationPort,
+          server,
+          sockets,
+          channels,
+        };
+        this.tunnels.set(id, tunnel);
+        resolve(this._safeTunnel(tunnel));
+      });
+    });
+  }
+
+  _safeTunnel(tunnel) {
+    return {
+      id: tunnel.id,
+      sessionId: tunnel.sessionId,
+      type: tunnel.type,
+      bindHost: tunnel.bindHost,
+      localPort: tunnel.localPort,
+      destinationHost: tunnel.destinationHost,
+      destinationPort: tunnel.destinationPort,
+    };
+  }
+
+  listTunnels(sessionId) {
+    return [...this.tunnels.values()]
+      .filter((tunnel) => !sessionId || tunnel.sessionId === sessionId)
+      .map((tunnel) => this._safeTunnel(tunnel));
+  }
+
+  stopTunnel(id) {
+    id = validateId(id, 'Tunnel ID');
+    const tunnel = this.tunnels.get(id);
+    if (!tunnel) return false;
+    this.tunnels.delete(id);
+    for (const socket of tunnel.sockets) socket.destroy();
+    for (const channel of tunnel.channels) channel.destroy();
+    try { tunnel.server.close(); } catch {}
+    return true;
+  }
+
+  stopSessionTunnels(sessionId) {
+    for (const tunnel of [...this.tunnels.values()]) {
+      if (tunnel.sessionId === sessionId) this.stopTunnel(tunnel.id);
+    }
+  }
+
   disconnect(sessionId) {
     const entry = this.sessions.get(sessionId);
     if (!entry) return;
@@ -263,6 +371,10 @@ class SshManager {
   _cleanup(sessionId) {
     const entry = this.sessions.get(sessionId);
     if (!entry) return;
+    this.stopSessionTunnels(sessionId);
+    for (const handler of this.cleanupHandlers) {
+      try { handler(sessionId); } catch {}
+    }
     // Xoá bản sao bí mật khỏi RAM khi phiên kết thúc
     if (entry.conn) {
       entry.conn.password = undefined;

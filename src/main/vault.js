@@ -12,10 +12,12 @@ const {
   validateUsername,
   normalizeEnvironment,
   inspectCommand,
+  validateId,
 } = require('./validation');
+const { normalizeRemoteRoot } = require('./remote-path');
 
 const VAULT_VERSION = 1;
-const PAYLOAD_SCHEMA_VERSION = 2;
+const PAYLOAD_SCHEMA_VERSION = 3;
 const BACKUP_VERSION = 1;
 
 function emptyVault() {
@@ -23,7 +25,7 @@ function emptyVault() {
     schemaVersion: PAYLOAD_SCHEMA_VERSION,
     connections: [],
     snippets: [],
-    settings: { autoLockMinutes: 15 },
+    settings: { autoLockMinutes: 15, clipboardClearSeconds: 30 },
   };
 }
 
@@ -39,6 +41,18 @@ function boundedNumber(value, fallback, min, max) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
+function normalizeTunnel(input) {
+  return {
+    id: input.id ? validateId(input.id, 'Tunnel ID') : crypto.randomUUID(),
+    name: cleanString(input.name, 'Tên tunnel', 120) || 'Local tunnel',
+    type: 'local',
+    bindHost: '127.0.0.1',
+    localPort: validatePort(input.localPort),
+    destinationHost: validateHost(input.destinationHost),
+    destinationPort: validatePort(input.destinationPort),
+  };
+}
+
 function migratePayload(payload) {
   const source = payload && typeof payload === 'object' ? payload : {};
   const migrated = {
@@ -49,6 +63,9 @@ function migratePayload(payload) {
       autoLockMinutes: Number.isInteger(source.settings && source.settings.autoLockMinutes)
         ? Math.min(240, Math.max(1, source.settings.autoLockMinutes))
         : 15,
+      clipboardClearSeconds: Number.isInteger(source.settings && source.settings.clipboardClearSeconds)
+        ? Math.min(300, Math.max(0, source.settings.clipboardClearSeconds))
+        : 30,
     },
   };
 
@@ -60,6 +77,12 @@ function migratePayload(payload) {
     defaultDirectory: typeof conn.defaultDirectory === 'string' ? conn.defaultDirectory : '',
     connectTimeout: boundedNumber(conn.connectTimeout, 20000, 1000, 120000),
     keepaliveInterval: boundedNumber(conn.keepaliveInterval, 20000, 0, 120000),
+    sftpRoot: typeof conn.sftpRoot === 'string' ? conn.sftpRoot : '/',
+    tunnels: Array.isArray(conn.tunnels)
+      ? conn.tunnels.slice(0, 20).map((tunnel) => {
+          try { return normalizeTunnel(tunnel); } catch { return null; }
+        }).filter(Boolean)
+      : [],
   }));
   return migrated;
 }
@@ -189,6 +212,12 @@ class Vault {
       color: /^#[0-9a-f]{6}$/i.test(String(input.color || '')) ? input.color : '',
       environment: normalizeEnvironment(input.environment),
       defaultDirectory: cleanString(input.defaultDirectory, 'Thư mục mặc định', 1024),
+      sftpRoot: normalizeRemoteRoot(cleanString(input.sftpRoot, 'SFTP root', 1024) || '/'),
+      tunnels: input.tunnels === undefined
+        ? structuredClone(prev.tunnels || [])
+        : Array.isArray(input.tunnels)
+          ? input.tunnels.slice(0, 20).map(normalizeTunnel)
+          : [],
       notes: cleanString(input.notes, 'Ghi chú', 4000, { trim: false }),
       onConnect: input.onConnect
         ? inspectCommand(input.onConnect).command
@@ -236,6 +265,30 @@ class Vault {
     this.data.connections.push(copy);
     this._persist();
     return this._safe(copy);
+  }
+
+  saveTunnel(connectionId, input) {
+    this._assertUnlocked();
+    const conn = this.data.connections.find((item) => item.id === connectionId);
+    if (!conn) throw new Error('Không tìm thấy kết nối');
+    const tunnel = normalizeTunnel(input);
+    conn.tunnels = Array.isArray(conn.tunnels) ? conn.tunnels : [];
+    const index = conn.tunnels.findIndex((item) => item.id === tunnel.id);
+    if (index >= 0) conn.tunnels[index] = tunnel;
+    else conn.tunnels.push(tunnel);
+    if (conn.tunnels.length > 20) throw new Error('Mỗi máy chủ chỉ được lưu tối đa 20 tunnel');
+    conn.updatedAt = new Date().toISOString();
+    this._persist();
+    return tunnel;
+  }
+
+  deleteTunnel(connectionId, tunnelId) {
+    this._assertUnlocked();
+    const conn = this.data.connections.find((item) => item.id === connectionId);
+    if (!conn) throw new Error('Không tìm thấy kết nối');
+    conn.tunnels = (conn.tunnels || []).filter((item) => item.id !== tunnelId);
+    conn.updatedAt = new Date().toISOString();
+    this._persist();
   }
 
   /** Ghi nhận lần dùng để sắp xếp “truy cập nhanh” theo tần suất. */
@@ -308,6 +361,11 @@ class Vault {
       throw new Error('Thời gian tự khoá phải từ 1 đến 240 phút');
     }
     this.data.settings.autoLockMinutes = autoLockMinutes;
+    const clipboardClearSeconds = Number(input.clipboardClearSeconds ?? this.data.settings.clipboardClearSeconds);
+    if (!Number.isInteger(clipboardClearSeconds) || clipboardClearSeconds < 0 || clipboardClearSeconds > 300) {
+      throw new Error('Thời gian xoá clipboard phải từ 0 đến 300 giây');
+    }
+    this.data.settings.clipboardClearSeconds = clipboardClearSeconds;
     this._persist();
     return this.getSettings();
   }

@@ -36,6 +36,9 @@ không có cách khôi phục.**
 | Đổi master password | Nút ⚙ trên thanh tiêu đề |
 | Backup/khôi phục | ⚙ → **Backup mã hoá**; credential không được xuất mặc định |
 | Quản lý host key | ⚙ → **Host key đã tin cậy** để xem fingerprint hoặc quên một mục |
+| Quản lý file SFTP | Kết nối SSH rồi chọn nút **⇄**: duyệt, upload/download, tạo thư mục, đổi tên, chmod và xoá có xác nhận |
+| Local port forwarding | Kết nối SSH rồi chọn nút **↔**; tunnel chỉ bind `127.0.0.1` và tự đóng theo phiên |
+| Ghi log phiên | Chọn nút **●** trong phiên; luôn có cảnh báo dữ liệu nhạy cảm và mặc định tắt |
 
 Máy chủ được xếp theo nhóm, trong mỗi nhóm ưu tiên máy vừa dùng gần nhất.
 
@@ -102,6 +105,9 @@ Khi sửa một máy chủ, để trống ô mật khẩu/passphrase nghĩa là 
   nhận; các mẫu nguy hiểm có cảnh báo riêng.
 - Kho tự khoá sau 15 phút không hoạt động theo mặc định (cấu hình 1–240 phút trong ⚙), đồng
   thời ngắt toàn bộ phiên và xoá khoá khỏi RAM.
+- Clipboard có thể tự xoá sau 0–300 giây và chỉ bị xoá nếu nội dung chưa bị người dùng thay đổi.
+- SFTP canonicalize đường dẫn POSIX trong `SFTP root`, chặn traversal, ghi file qua tên tạm và
+  khôi phục bản cũ nếu replace thất bại. Local tunnel chỉ lắng nghe trên loopback.
 
 ### Backup
 
@@ -129,6 +135,8 @@ Các phép kiểm tra được chia theo các tầng sau:
 | `npm run test:import` | Bộ đọc `~/.ssh/config`: wildcard, thiếu trường, nhập trùng |
 | `npm run test:utf8` | Tiếng Việt qua đường SSH, kể cả khi gói tin bị cắt từng byte một |
 | `npm run test:ssh` | Dựng SSH server thật trên `127.0.0.1`: password, key thường/key có passphrase, PTY, resize và host key đổi |
+| `npm run test:sftp` | Canonical path, traversal guard, CRUD, chmod, upload/download và progress |
+| `npm run test:tunnel` | Forward TCP, port conflict, stop và teardown theo phiên SSH |
 | `npm run test:ui` | Chạy Electron thật, điều khiển giao diện: tạo kho, thêm máy chủ, tìm kiếm, bảng Ctrl+K, lệnh nhanh, khoá/mở lại |
 | `npm run test:ime` | Bộ gõ tiếng Việt: phím trong lúc soạn thảo, tìm không dấu, dữ liệu sống sót qua vòng khoá/mở |
 | `npm run test:theme` | Khoá các giá trị Ubuntu: accent cam, bảng Tango, nền tím cà, chữ Ubuntu Sans có glyph tiếng Việt, số đo libadwaita — chạy cả chế độ sáng lẫn tối |
@@ -152,6 +160,8 @@ src/main/
   vault.js        kho kết nối và lệnh nhanh, nhập từ ~/.ssh/config
   crypto.js       scrypt + AES-256-GCM
   validation.js   validation đầu vào, che lỗi và nhận diện lệnh nguy hiểm
+  remote-path.js  canonical path và scope guard cho SFTP
+  sftp-service.js SFTP CRUD/transfer/cancel trong main process
   ssh-manager.js  phiên ssh2, known_hosts, ssh-agent
   preload.js      cầu nối duy nhất giữa renderer và main
 src/renderer/

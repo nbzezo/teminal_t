@@ -68,7 +68,7 @@ QWebEngineView + xterm.js. Dependency và chi phí đóng gói Chromium vốn đ
 | SSH private key | Bắt buộc | Bắt buộc | Ed25519 loopback |
 | SSH Agent | Nếu hỗ trợ | Nếu hỗ trợ | unit test adapter; thủ công với agent thật |
 | Terminal tương tác | Bắt buộc | Bắt buộc | PTY/input/resize/UTF-8 tự động; app full-screen thủ công |
-| SFTP upload/download | Bắt buộc | Bắt buộc | Chưa triển khai |
+| SFTP upload/download | Bắt buộc | Bắt buộc | Mock integration đạt; cần test máy Ubuntu thật |
 | Jump Host | Bắt buộc | Bắt buộc | Chưa triển khai |
 | Port forwarding | Bắt buộc | Bắt buộc | Chưa triển khai |
 | Import/export cấu hình | Bắt buộc | Bắt buộc | Import có test; export chưa triển khai |
@@ -86,7 +86,7 @@ QWebEngineView + xterm.js. Dependency và chi phí đóng gói Chromium vốn đ
 | Phím tắt | Có | Có | Clipboard phụ thuộc quyền clipboard desktop | Kiểm thủ công GNOME/KDE; giữ Ctrl+C/Ctrl+D cho PTY | Source + UI/IME test |
 | Theme/font/DPI | Có | Có | Frameless window/compositor và scaling cần máy thật | Test 100/125/150/200%, GNOME Wayland/X11, KDE | Theme test Windows; Ubuntu chờ CI/máy thật |
 | System tray/notification | Không | Không | Chưa có tính năng; không ảnh hưởng startup | Chỉ triển khai khi có yêu cầu sản phẩm | Rà source |
-| SFTP/quyền remote | Không | Không | Chưa có SFTP UI/service | Thiết kế service riêng; dùng POSIX path cho remote Linux; test resume/cancel/chmod | GAP, chưa triển khai |
+| SFTP/quyền remote | Có | Có | Chưa kiểm máy Ubuntu thật/drag-drop/quick edit | POSIX scope guard, CRUD, transfer, chmod | Unit/mock integration đạt |
 | Jump Host/ProxyJump | Không | Không | Model và SSH manager chưa hỗ trợ | Thêm tunnel client riêng, host-key verification cho từng hop | GAP, chưa triển khai |
 | Port forwarding | Không | Không | Chưa có model/UI/lifecycle | Thêm local/remote/dynamic forwarding và teardown | GAP, chưa triển khai |
 | Shell cục bộ | Không dùng | Không dùng | Không có chức năng chạy local command | Giữ tách biệt khỏi remote PTY | Rà source |
@@ -94,13 +94,13 @@ QWebEngineView + xterm.js. Dependency và chi phí đóng gói Chromium vốn đ
 | Background/teardown | Event-driven | Event-driven | Cần soak test khi đóng trong lúc đang kết nối | Theo dõi mọi client/stream, disconnect ở lock/quit | Unit/integration test Windows |
 | Đóng gói | NSIS + portable | AppImage + deb | Chưa có icon phát hành; chưa ký | Bổ sung asset, code signing Windows, kiểm install sạch | Cấu hình + CI; build tại máy hiện tại được ghi ở báo cáo chạy |
 
-Các dòng SFTP, Jump Host, Port Forwarding và export là tiêu chí chưa đạt. Không được coi toàn
+Các dòng Jump Host, remote/dynamic Port Forwarding vẫn chưa đạt. Không được coi toàn
 bộ yêu cầu đa nền tảng đã hoàn thành cho tới khi các tính năng nằm trong phạm vi sản phẩm được
 triển khai và chạy trên máy thật của cả hai hệ điều hành.
 
 ## Trạng thái kiểm chứng ngày 2026-08-31
 
-- **Windows (máy hiện tại):** `npm test` đạt 144/144; bản unpacked được tạo thành công tại
+- **Windows (máy hiện tại):** `npm test` đạt 155/155; bản unpacked được tạo thành công tại
   `dist/win-unpacked`. NSIS/portable trong lượt rà soát này bị chặn ở cache NSIS ngoài
   workspace (`EPERM`), không phải lỗi compile/package source.
 - **Ubuntu 22.04/24.04:** đã rà source, có unit test adapter, cấu hình package và CI/Xvfb;
