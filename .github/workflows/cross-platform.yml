@@ -47,11 +47,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # --publish never là bắt buộc trên CI: thấy biến môi trường của CI thì
+          # electron-builder mặc định tự publish artifact lên GitHub Releases và
+          # chết vì không có GH_TOKEN, ngay sau khi đã đóng gói xong. Job này chỉ
+          # để kiểm chứng đóng gói được, không phải để phát hành.
           - os: windows-latest
-            command: npm run build:win
+            command: npm run build:win -- --publish never
             artifact: windows
           - os: ubuntu-22.04
-            command: npm run build:linux
+            command: npm run build:linux -- --publish never
             artifact: ubuntu
     runs-on: ${{ matrix.os }}
     steps:
