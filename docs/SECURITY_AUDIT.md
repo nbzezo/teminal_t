@@ -191,3 +191,44 @@ báo Caps Lock, nút hiện mật khẩu và thước đo độ mạnh; bảng p
 - Payload schema lên **v5** (thêm `workspace` và các tuỳ chọn giao diện). Migration
   từ v1–v4 chạy tự động khi mở kho.
 - `eslint` là devDependency mới: chạy `npm install` trước `npm test`.
+
+## Bổ sung: phiên bền (tmux)
+
+Ngày: 2026-09-01. Phạm vi: tính năng phiên bền vừa thêm. Xem thiết kế ở
+[TMUX_DESIGN.md](TMUX_DESIGN.md) và cơ sở quyết định ở [TMUX_MOSH.md](TMUX_MOSH.md).
+
+### Thay đổi trong cam kết bảo mật
+
+**Khoá kho không còn dừng được việc đang chạy trên máy chủ.** Trước đây
+<kbd>Ctrl</kbd>+<kbd>L</kbd> và auto-lock ngắt hết phiên SSH và xoá khoá khỏi RAM,
+nên coi như mọi việc từ xa cũng dừng theo. Khi bật phiên bền, phần ngắt kết nối và
+xoá khoá vẫn nguyên, nhưng **phiên tmux tiếp tục chạy trên máy chủ**, kể cả shell
+root, cho tới khi người dùng chủ động kết thúc.
+
+Đánh đổi này được xử lý như sau, không im lặng:
+
+- Mặc định **tắt**. Phải bật từng máy, hoặc bật toàn cục trong ⚙.
+- README nêu rõ trong mục *Phiên bền* và mục *Bảo mật*.
+- Bảng **Phiên trên máy chủ** cho xem và kết thúc từng phiên; `tmux kill-session`
+  luôn đi qua hộp thoại xác nhận của hệ điều hành, cùng kiểu với cảnh báo Production.
+
+### Bề mặt mới và cách chặn
+
+| Bề mặt | Rủi ro | Cách chặn |
+| --- | --- | --- |
+| Tên phiên ghép vào lệnh chạy trên máy chủ | Command injection | Tên do **main process** dựng từ tên máy chủ trong kho cộng vị trí tab/pane; renderer chỉ gửi hai con số. Tên người dùng tự đặt phải qua `validateTmuxName` — kiểm theo `^[A-Za-z0-9_-]{1,32}$`, không escape. `test/tmux.test.js` thử 15 mẫu injection |
+| `defaultDirectory` đi vào `tmux new-session -c` | Thoát khỏi nháy đơn | `shellQuote` dùng đúng khuôn `'"'"'` như đường `cd` sẵn có; có test cho đường dẫn chứa nháy đơn |
+| `ssh:tmuxKill` từ renderer | Giết nhầm phiên | `validateTmuxName` ở main, cộng hộp thoại xác nhận nêu rõ tiến trình sẽ chết |
+| Gắn nhầm phiên của tab khác | Lộ/ghi đè việc đang chạy | Mọi target dùng cú pháp so khớp chính xác `-t =NAME`; thiếu dấu `=` thì tmux khớp theo tiền tố và `sshman_web01` có thể gắn vào `sshman_web01-2`. Có test chặn hồi quy |
+| Probe `tmux ls` treo | Pane kẹt ở trạng thái chờ | Timeout 5 giây rồi coi như không có tmux và rơi về `shell()` |
+
+### Không đổi
+
+Host key TOFU, vault, IPC allowlist, kiểm tra nguồn gửi IPC và mô hình bí mật
+(renderer không bao giờ nhận credential) đều không thay đổi. SFTP, port forwarding,
+jump host và dashboard vẫn đi qua channel `exec`/`sftp` riêng trên cùng `ssh2.Client`;
+tmux không nằm trên đường của chúng.
+
+Ghi log phiên vẫn chỉ ghi dữ liệu từ máy chủ. Log của một phiên tmux nhiều escape
+sequence hơn shell thường; app đặt `status off` cho phiên nó tạo nên phần lớn rác
+vẽ lại status bar không còn.

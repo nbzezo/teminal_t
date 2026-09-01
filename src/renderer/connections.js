@@ -239,6 +239,8 @@ export function openConnectionModal(connId) {
   $('f-timeout').value = conn ? conn.connectTimeout || 20000 : 20000;
   $('f-keepalive').value = conn ? (conn.keepaliveInterval ?? 20000) : 20000;
   $('f-auto-reconnect').checked = Boolean(conn && conn.autoReconnect);
+  $('f-persistent-session').value = conn ? conn.persistentSession || '' : '';
+  $('f-tmux-name').value = conn ? conn.tmuxSessionName || '' : '';
   $('f-notes').value = conn ? conn.notes || '' : '';
   $('f-password').value = '';
   $('f-passphrase').value = '';
@@ -369,6 +371,8 @@ export function initConnections() {
       connectTimeout: $('f-timeout').value,
       keepaliveInterval: $('f-keepalive').value,
       autoReconnect: $('f-auto-reconnect').checked,
+      persistentSession: $('f-persistent-session').value,
+      tmuxSessionName: $('f-tmux-name').value.trim(),
       notes: $('f-notes').value,
     };
     try {

@@ -532,6 +532,43 @@ app.whenReady().then(async () => {
     await wait(300);
     check('đóng tab hỗn hợp thì mọi pane biến mất', await run(`document.querySelectorAll('.term-pane').length === 0`));
 
+    // --- 13d. Tên phiên tmux: số tab phải đếm riêng cho từng máy chủ ---
+    // Một tab chứa được pane của nhiều máy, nên một số tab dùng chung cho cả tab
+    // sẽ làm hai tab khác nhau trùng tên phiên trên cùng một máy chủ — tức hai
+    // pane soi gương nhau qua tmux.
+    const tmuxSlots = await run(`(async () => {
+      const core = await import('./core.js');
+      const sessions = await import('./sessions.js');
+      const a = core.state.connections.find((c) => c.host === 'example.internal').id;
+      const b = core.state.connections.find((c) => c.host === 'second.internal').id;
+      // Không dùng idle: số tab chỉ được cấp khi pane thật sự đi mở kết nối.
+      const first = await sessions.openSession(a);
+      const tab1 = core.state.sessions.get(first).workspaceId;
+      await sessions.openSession(b, { workspaceId: tab1, direction: 'vertical' });
+      const second = await sessions.openSession(a);
+      const tab2 = core.state.sessions.get(second).workspaceId;
+      const map = (id) => ({ ...core.state.workspaces.get(id).tabIndexByConn });
+      return { tab1: map(tab1), tab2: map(tab2), a, b };
+    })()`);
+    check(
+      'tab đầu là số 1 cho cả hai máy chủ trong đó',
+      tmuxSlots.tab1[tmuxSlots.a] === 1 && tmuxSlots.tab1[tmuxSlots.b] === 1,
+      tmuxSlots,
+    );
+    check(
+      'tab thứ hai của cùng một máy chủ nhận số 2, không trùng tên phiên',
+      tmuxSlots.tab2[tmuxSlots.a] === 2,
+      tmuxSlots,
+    );
+
+    await run(`(async () => {
+      const sessions = await import('./sessions.js');
+      const core = await import('./core.js');
+      for (const id of [...core.state.sessions.keys()]) sessions.closeSession(id, true);
+      return true;
+    })()`);
+    await wait(400);
+
     // --- 14. Điều khiển cửa sổ gọi đúng BrowserWindow ---
     // isMaximized()/isMinimized() phản ánh trạng thái do window manager quản lý.
     // CI chạy dưới xvfb, vốn không có window manager nào, nên ở đó cửa sổ không

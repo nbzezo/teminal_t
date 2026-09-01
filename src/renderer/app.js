@@ -37,6 +37,7 @@ import {
   zoomTerminal,
   toggleSessionLog,
   openDashboard,
+  openTmuxSessions,
   refreshDashboard,
   stopDashboardTimer,
 } from './sessions.js';
@@ -57,6 +58,7 @@ function paintToolbarIcons() {
   setButtonIcon('btn-split-v', 'splitVertical');
   setButtonIcon('btn-split-h', 'splitHorizontal');
   setButtonIcon('btn-dashboard', 'dashboard');
+  setButtonIcon('btn-tmux', 'persist');
   setButtonIcon('btn-sftp', 'transfer');
   setButtonIcon('btn-tunnels', 'tunnel');
   setButtonIcon('btn-session-log', 'record');
@@ -251,6 +253,7 @@ function initShell() {
   $('btn-split-v').addEventListener('click', () => splitActiveSession('vertical'));
   $('btn-split-h').addEventListener('click', () => splitActiveSession('horizontal'));
   $('btn-dashboard').addEventListener('click', openDashboard);
+  $('btn-tmux').addEventListener('click', () => openTmuxSessions());
   $('btn-session-log').addEventListener('click', toggleSessionLog);
   $('dashboard-refresh').addEventListener('click', refreshDashboard);
   $('btn-shortcuts').addEventListener('click', () => openModal('shortcuts-modal'));

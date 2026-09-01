@@ -56,8 +56,9 @@ export const state = {
   snippets: [],
   /** sessionId -> { connId, name, term, fit, search, pane, status, workspaceId, … } */
   sessions: new Map(),
-  /** workspaceId -> { layout, activeSessionId, name, autoName } — một tab là
-   *  một công việc, các pane trong đó có thể ở những máy chủ khác nhau. */
+  /** workspaceId -> { layout, activeSessionId, name, autoName, tabIndexByConn }
+   *  — một tab là một công việc, các pane trong đó có thể ở những máy chủ khác
+   *  nhau; tabIndexByConn giữ số tab của từng máy chủ để đặt tên phiên tmux. */
   workspaces: new Map(),
   activeSessionId: null,
   selectedConnId: null,
@@ -82,17 +83,36 @@ export const state = {
 let toastTimer = null;
 
 /** Thông báo nổi kiểu AdwToast: hiện giữa dưới rồi tự tắt. */
-export function setStatus(text, kind) {
+/**
+ * @param {string} text
+ * @param {string} [kind] 'error' | 'ok'
+ * @param {{label: string, onClick: Function}} [action] Nút trên toast. Toast có
+ *   nút thì ở lại lâu hơn hẳn — biến mất sau 3,5 giây thì nút trên nó vô nghĩa —
+ *   nhưng vẫn tự ẩn, vì một toast dính vĩnh viễn còn tệ hơn một nút bị lỡ.
+ */
+export function setStatus(text, kind, action) {
   const toast = $('statusbar');
+  const button = $('status-action');
   $('status-text').textContent = text;
   toast.className = 'toast' + (kind === 'error' ? ' toast-error' : kind === 'ok' ? ' toast-ok' : '');
   toast.hidden = false;
+
+  button.hidden = !action;
+  button.onclick = null;
+  if (action) {
+    button.textContent = action.label;
+    button.onclick = () => {
+      toast.hidden = true;
+      action.onClick();
+    };
+  }
+
   clearTimeout(toastTimer);
   toastTimer = setTimeout(
     () => {
       toast.hidden = true;
     },
-    kind === 'error' ? 6000 : 3500,
+    action ? 20000 : kind === 'error' ? 6000 : 3500,
   );
 }
 
@@ -139,6 +159,11 @@ const ICONS = {
   dashboard: [
     'M2.5 2.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1ZM3 4v8h10V4Z',
     'M4.5 9h1.5v2H4.5zM7.25 6.5h1.5V11h-1.5zM10 8h1.5v3H10z',
+  ],
+  // Hai khung xếp chồng: phiên vẫn còn đó sau khi đóng cửa sổ này.
+  persist: [
+    'M1.5 6.5A1.5 1.5 0 0 1 3 5h6a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 9 14H3a1.5 1.5 0 0 1-1.5-1.5Zm1.5 0v6h6v-6Z',
+    'M5 2h8a1.5 1.5 0 0 1 1.5 1.5V11H13V3.5H5Z',
   ],
   transfer: ['M9.5 2.6 13.4 5.5 9.5 8.4V6.5H2.6v-2H9.5Z', 'M6.5 7.6 2.6 10.5 6.5 13.4V11.5h6.9v-2H6.5Z'],
   tunnel: ['M1.8 8 5 5.4v5.2Z', 'M14.2 8 11 10.6V5.4Z', 'M4.6 7h6.8v2H4.6z'],

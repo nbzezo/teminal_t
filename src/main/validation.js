@@ -66,6 +66,66 @@ function normalizeEnvironment(value) {
   return ['development', 'staging', 'production'].includes(env) ? env : 'development';
 }
 
+/** '' = theo mặc định chung trong cài đặt; 'on'/'off' = máy này tự quyết. */
+function normalizePersistentSession(value) {
+  const mode = String(value == null ? '' : value).toLowerCase();
+  return mode === 'on' || mode === 'off' ? mode : '';
+}
+
+const TMUX_NAME = /^[A-Za-z0-9_-]{1,32}$/;
+
+/**
+ * Tên session đi thẳng vào một lệnh chạy trên máy chủ, nên nó được *kiểm* chứ
+ * không phải escape: chỉ chữ không dấu, số, gạch ngang và gạch dưới mới qua được.
+ */
+function validateTmuxName(value, field = 'Tên phiên') {
+  const name = cleanString(value, field, 32, { required: true });
+  if (!TMUX_NAME.test(name)) {
+    throw new Error(field + ' chỉ được chứa chữ không dấu, số, gạch ngang hoặc gạch dưới');
+  }
+  return name;
+}
+
+/**
+ * Rút tên máy chủ thành mẩu an toàn. Tiếng Việt bị bỏ dấu thay vì bị loại sạch,
+ * để "Máy chủ Hà Nội" ra `may-chu-ha-noi` chứ không ra một chuỗi rỗng.
+ */
+function slugifyForTmux(value) {
+  return String(value == null ? '' : value)
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    // đ/Đ không tách được bằng NFD vì gạch ngang là một phần của chữ cái.
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .slice(0, 16)
+    .replace(/^-+|-+$/g, '');
+}
+
+function boundedIndex(value, max) {
+  const index = Number(value);
+  if (!Number.isInteger(index) || index < 1) return 1;
+  return Math.min(max, index);
+}
+
+/**
+ * Tên tmux session của một pane, đặt theo đúng thứ người dùng đang nhìn: tab thứ
+ * mấy, pane thứ mấy. Khi họ ssh tay vào máy rồi gõ `tmux ls` là đối chiếu được
+ * ngay, thay vì thấy một dãy UUID vô nghĩa.
+ *
+ * Tab 1 pane 1 không có hậu tố, nên trường hợp phổ biến nhất được tên ngắn nhất.
+ */
+function buildTmuxSessionName(connectionName, { tabIndex = 1, paneIndex = 1, base = '' } = {}) {
+  const tab = boundedIndex(tabIndex, 99);
+  const pane = boundedIndex(paneIndex, 9);
+  // Tên người dùng tự đặt cũng chỉ là *gốc*: hậu tố tab/pane vẫn được thêm vào,
+  // nếu không thì hai pane cùng gắn một phiên và soi gương nhau.
+  let name = base ? validateTmuxName(base).slice(0, 26) : 'sshman_' + (slugifyForTmux(connectionName) || 'server');
+  if (tab > 1 || pane > 1) name += '-' + tab;
+  if (pane > 1) name += '-' + pane;
+  return validateTmuxName(name);
+}
+
 const DANGEROUS_PATTERNS = [
   /(?:^|[;&|]\s*)rm\s+(?:-[^\s]*[rf][^\s]*\s+)+(?:\/|~|\*)/i,
   /\b(?:mkfs(?:\.[a-z0-9]+)?|fdisk|parted)\b/i,
@@ -101,6 +161,10 @@ module.exports = {
   validateId,
   clampTerminalSize,
   normalizeEnvironment,
+  normalizePersistentSession,
+  validateTmuxName,
+  slugifyForTmux,
+  buildTmuxSessionName,
   inspectCommand,
   safeErrorMessage,
 };

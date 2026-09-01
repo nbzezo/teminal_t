@@ -51,7 +51,9 @@ Toàn bộ kho — kể cả tên máy chủ — được mã hoá bằng khoá 
 | Port forwarding         | Nút tunnel hỗ trợ Local, Remote và SOCKS5 Dynamic; đều bind loopback và tự đóng theo kết nối                           |
 | Jump host               | Chọn một cấu hình đã lưu trong ô **Jump host**; mỗi hop xác minh host key độc lập; `ProxyJump` được nhập tự động       |
 | Ghi log phiên           | Nút ghi log trong phiên; nút sáng đỏ khi đang ghi, luôn cảnh báo dữ liệu nhạy cảm và mặc định tắt                      |
-| Tự kết nối lại          | Bật trong cấu hình máy chủ; retry 1/2/4 giây, tối đa 3 lần và không chạy lại `onConnect`                               |
+| Tự kết nối lại          | Bật trong cấu hình máy chủ; retry 1/2/4 giây, tối đa 3 lần. Bật phiên bền thì kiên nhẫn tới 10 phút               |
+| Phiên bền (tmux)        | Ô **Phiên bền** trong form máy chủ, hoặc ⚙ → bật cho mọi máy. Rớt mạng không mất việc đang chạy                    |
+| Xem và dọn phiên tmux   | Nút **Phiên trên máy chủ** trên thanh công cụ, hoặc chuột phải trong terminal                                      |
 | Tuỳ chỉnh terminal      | ⚙ → **Terminal**: font, cỡ chữ, màu nền, copy khi bôi đen; áp dụng ngay cho các tab đang mở                            |
 | Chế độ sáng/tối         | ⚙ → **Chung**: theo hệ thống, luôn sáng, hoặc luôn tối                                                                 |
 | Dashboard máy chủ       | Nút dashboard trong phiên đã kết nối; CPU/RAM/disk/uptime/load tự làm mới mỗi 10 giây, chỉ đọc và không cài agent      |
@@ -64,6 +66,34 @@ dùng được hoàn toàn bằng bàn phím: <kbd>Tab</kbd> vào danh sách, m�
 Ứng dụng nhớ kích thước cửa sổ và mở lại các tab của lần chạy trước ở trạng thái
 chờ — tab được dựng sẵn nhưng chỉ kết nối khi bạn bấm. Đóng cửa sổ lúc còn phiên
 đang chạy sẽ được hỏi lại; có thể tắt trong ⚙ → **Chung**.
+
+## Phiên bền
+
+Bật **Phiên bền** cho một máy chủ thì mỗi pane chạy trong một phiên `tmux` trên chính
+máy đó. Rớt mạng, đóng nắp laptop hay đổi Wi-Fi đều không giết tiến trình đang chạy;
+lần kết nối sau bạn nhận lại đúng màn hình cũ kèm thư mục và job. Máy chủ phải có sẵn
+`tmux`; nếu không, app rơi về shell thường kèm một dòng cảnh báo.
+
+Ba điều thay đổi khi bật, cần biết trước:
+
+- **Đóng pane là *rời phiên*, không phải kết thúc.** Việc vẫn chạy trên máy chủ. Kết
+  thúc hẳn bằng chuột phải → **Kết thúc phiên trên máy chủ**, hoặc trong bảng
+  **Phiên trên máy chủ**. Cả hai đều hỏi xác nhận.
+- **Khoá kho không dừng được việc từ xa nữa.** Xem mục Bảo mật.
+- **Cuộn màn hình do tmux quản.** App tự bật `mouse on` cho phiên nó tạo nên con lăn
+  vẫn dùng được. `history-limit` app đặt chỉ áp cho pane tạo sau; muốn áp cho cả pane
+  đầu tiên thì đặt trong `~/.tmux.conf` trên máy chủ.
+
+Tiếng Việt trong phiên bền vẫn hiển thị đúng: app gọi `tmux -u` để ép chế độ UTF-8,
+không phụ thuộc vào biến locale trên máy chủ. Thiếu nó thì tmux thay mọi ký tự có
+dấu bằng `_`.
+
+Tên phiên đặt theo đúng tab và pane bạn đang nhìn — tab đầu của `web01` là
+`sshman_web01`, tab hai là `sshman_web01-2`, pane ba của tab hai là `sshman_web01-2-3`
+— nên `tmux ls` khi ssh tay vào máy vẫn đọc được. Số tab đếm riêng cho từng máy chủ:
+một tab là một công việc và có thể chứa pane của nhiều máy khác nhau, nên mỗi máy tự
+đếm tab của riêng nó. Mỗi pane một phiên riêng, không pane nào soi gương pane nào.
+Ba tuỳ chọn tmux đều ở phạm vi session nên chết theo session, không đụng `~/.tmux.conf` của bạn.
 
 ## Tiếng Việt
 
@@ -129,6 +159,12 @@ Khi sửa một máy chủ, để trống ô mật khẩu/passphrase nghĩa là 
 - Kho tự khoá sau 15 phút không hoạt động theo mặc định (cấu hình 1–240 phút trong ⚙), đồng
   thời ngắt toàn bộ phiên và xoá khoá khỏi RAM. Đồng hồ đếm nằm ở main process, nên trang
   giao diện treo hay bị dừng cũng không giữ kho mở quá hạn.
+- **Bật phiên bền thì khoá kho không còn dừng được việc từ xa.** Khoá kho vẫn ngắt hết kết nối
+  SSH và xoá khoá khỏi RAM như trước, nhưng phiên tmux — kể cả shell root — vẫn chạy tiếp trên
+  máy chủ cho tới khi bạn kết thúc nó. Đây là đánh đổi của tính năng, mặc định tắt, và mở bằng
+  nút **Phiên trên máy chủ** để xem hoặc dừng.
+- Tên phiên tmux do main process tự dựng từ tên máy chủ trong kho cộng vị trí tab/pane; renderer
+  chỉ gửi hai con số. Tên tự đặt phải khớp `^[A-Za-z0-9_-]{1,32}$` — kiểm chứ không escape.
 - Tham số scrypt đi kèm từng kho. Khi nâng chi phí KDF cho kho mới, kho cũ vẫn mở được bằng
   đúng tham số của nó thay vì báo nhầm "sai master password".
 - Lỗi ngoài dự kiến ở main process được ghi lại và báo ra giao diện thay vì làm sập tiến trình
@@ -165,6 +201,7 @@ Các phép kiểm tra được chia theo các tầng sau:
 | `npm run test:import`   | Bộ đọc `~/.ssh/config`: wildcard, thiếu trường, nhập trùng                                                                                       |
 | `npm run test:utf8`     | Tiếng Việt qua đường SSH, kể cả khi gói tin bị cắt từng byte một                                                                                 |
 | `npm run test:ssh`      | Dựng SSH server thật trên `127.0.0.1`: password, key thường/key có passphrase, PTY, resize và host key đổi                                       |
+| `npm run test:tmux`     | Đặt tên phiên (kể cả tên máy chủ tiếng Việt), chặn 15 mẫu command injection, dựng lệnh gắn phiên; rồi qua SSH thật: probe, exec có pty, resize, đường lùi khi máy chủ không có tmux |
 | `npm run test:sftp`     | Canonical path, traversal guard, CRUD, chmod, upload/download và progress                                                                        |
 | `npm run test:tunnel`   | Forward TCP, port conflict, stop và teardown theo phiên SSH                                                                                      |
 | `npm run test:ui`       | Chạy Electron thật: tạo kho, thêm máy chủ, tìm kiếm, bảng Ctrl+K, lệnh nhanh, hộp nhập liệu, thanh tìm terminal, khoá/mở lại                     |

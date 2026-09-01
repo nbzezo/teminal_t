@@ -253,6 +253,211 @@ function setPaneState(session, kind, text) {
 }
 
 /* =========================================================================
+ * Phiên bền (tmux)
+ * ========================================================================= */
+
+/**
+ * Số thứ tự tab của một máy chủ — chỗ trống nhỏ nhất, nên tên phiên đặc và đoán
+ * được: đóng tab 2 rồi mở lại thì nó vẫn là tab 2 và gắn lại đúng việc cũ.
+ *
+ * Một tab là một công việc và có thể chứa pane của nhiều máy chủ khác nhau, nên
+ * số này phải tính riêng cho từng máy chủ. Một số dùng chung cho cả tab sẽ làm
+ * hai tab khác nhau trùng tên phiên trên cùng một máy chủ.
+ */
+function tabIndexFor(workspaceId, connId) {
+  const workspace = state.workspaces.get(workspaceId);
+  if (!workspace) return 1;
+  if (!workspace.tabIndexByConn) workspace.tabIndexByConn = {};
+  if (workspace.tabIndexByConn[connId]) return workspace.tabIndexByConn[connId];
+  const used = new Set();
+  for (const [id, other] of state.workspaces) {
+    if (id === workspaceId) continue;
+    const index = other.tabIndexByConn && other.tabIndexByConn[connId];
+    if (index) used.add(index);
+  }
+  let index = 1;
+  while (used.has(index)) index += 1;
+  // Giữ lại cả khi pane cuối của máy chủ đó rời tab: mở lại trong đúng tab này
+  // thì vẫn gắn về đúng phiên cũ.
+  workspace.tabIndexByConn[connId] = index;
+  return index;
+}
+
+/** Số pane cũng đếm riêng theo máy chủ, cùng lý do với số tab. */
+function nextPaneIndex(workspaceId, connId) {
+  const used = new Set(
+    panesOf(workspaceId)
+      .filter(([, session]) => session.connId === connId)
+      .map(([, session]) => session.paneIndex),
+  );
+  let index = 1;
+  while (used.has(index)) index += 1;
+  return index;
+}
+
+/** Vị trí gửi sang main process để nó dựng tên phiên tmux. Chỉ gồm số. */
+function slotOf(session) {
+  return {
+    tabIndex: tabIndexFor(session.workspaceId, session.connId),
+    paneIndex: session.paneIndex || 1,
+  };
+}
+
+/**
+ * Dải gợi ý nổi ở đáy pane, với nút thật.
+ *
+ * Không vẽ nút bằng chữ trong terminal: tmux chạy trên alternate screen và xoá
+ * sạch mọi thứ app tự ghi vào đó ở lần vẽ lại kế tiếp. Và banner phải là
+ * `position: absolute` — chiếm chỗ theo chiều dọc thì FitAddon co terminal lại,
+ * tmux nhận resize rồi vẽ lại toàn màn hình chỉ vì một lời gợi ý.
+ */
+function showPaneBanner(session, text, actions) {
+  hidePaneBanner(session);
+  const banner = document.createElement('div');
+  banner.className = 'pane-banner';
+
+  const message = document.createElement('span');
+  message.className = 'pane-banner-text';
+  message.textContent = text;
+  banner.appendChild(message);
+
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm' + (action.suggested ? ' btn-suggested' : ' btn-flat');
+    button.textContent = action.label;
+    // Bấm nút không được kéo con trỏ ra khỏi terminal.
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', () => {
+      hidePaneBanner(session);
+      action.onClick();
+      session.term.focus();
+    });
+    banner.appendChild(button);
+  }
+
+  session.pane.appendChild(banner);
+  session.banner = banner;
+  session.bannerTimer = setTimeout(() => hidePaneBanner(session), 30000);
+}
+
+function hidePaneBanner(session) {
+  clearTimeout(session.bannerTimer);
+  session.bannerTimer = null;
+  if (session.banner) {
+    session.banner.remove();
+    session.banner = null;
+  }
+}
+
+/**
+ * Tên phiên tmux hiện ở thanh tiêu đề, không phải trên pane.
+ *
+ * Bản đầu vẽ nó thành chip nổi ở góc pane và chip đó **che mất chữ của
+ * terminal** — thấy rõ nhất ở pane hẹp sau khi chia đôi. Không có chỗ nào trên
+ * mặt terminal là chỗ trống an toàn: mọi ô đều có thể có nội dung.
+ */
+function setPaneBadge(session, name, attached) {
+  session.tmuxAttached = Boolean(attached);
+  if (!name) session.tmuxName = '';
+  renderHeader();
+}
+
+function relativeTime(timestamp) {
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 90) return 'vừa xong';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return minutes + ' phút trước';
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return hours + ' giờ trước';
+  return Math.round(hours / 24) + ' ngày trước';
+}
+
+/**
+ * Bảng "Phiên trên máy chủ". Bật phiên bền nghĩa là việc tích tụ vô hình trên
+ * máy chủ; đây là chỗ nhìn thấy và dọn nó.
+ */
+export async function openTmuxSessions(sessionId) {
+  const session = state.sessions.get(sessionId || state.activeSessionId);
+  if (!session || session.status !== 'connected') {
+    return setStatus('Cần một phiên đang kết nối để xem phiên trên máy chủ.', 'error');
+  }
+  openModal('tmux-modal');
+  $('tmux-subtitle').textContent = session.name;
+  await refreshTmuxSessions(session.id);
+}
+
+async function refreshTmuxSessions(sessionId) {
+  const list = $('tmux-list');
+  const empty = $('tmux-empty');
+  list.textContent = '';
+  empty.hidden = true;
+  $('tmux-loading').hidden = false;
+
+  let result;
+  try {
+    result = await call(bridge.ssh.tmuxList(sessionId));
+  } catch (err) {
+    $('tmux-loading').hidden = true;
+    empty.hidden = false;
+    empty.textContent = err.message;
+    return;
+  }
+  $('tmux-loading').hidden = true;
+
+  if (!result.available) {
+    empty.hidden = false;
+    empty.textContent = 'Máy chủ này chưa cài tmux.';
+    return;
+  }
+  if (result.sessions.length === 0) {
+    empty.hidden = false;
+    empty.textContent = 'Không có phiên nào đang chạy trên máy chủ.';
+    return;
+  }
+
+  // Phiên đang rời lên trước: đó là thứ người ta vào đây để tìm.
+  const rows = [...result.sessions].sort((a, b) => Number(a.attached) - Number(b.attached));
+  for (const item of rows) {
+    const row = document.createElement('div');
+    row.className = 'tmux-row';
+
+    const main = document.createElement('div');
+    main.className = 'tmux-row-main';
+    const name = document.createElement('span');
+    name.className = 'tmux-row-name';
+    name.textContent = item.name;
+    const meta = document.createElement('span');
+    meta.className = 'dim tmux-row-meta';
+    meta.textContent =
+      (item.attached ? 'Đang gắn' : 'Đang rời') +
+      ' · ' +
+      item.windows +
+      ' cửa sổ · ' +
+      relativeTime(item.createdAt) +
+      (item.owned ? '' : ' · tạo bằng tay');
+    main.append(name, meta);
+
+    const kill = document.createElement('button');
+    kill.type = 'button';
+    kill.className = 'btn btn-sm btn-destructive';
+    kill.textContent = 'Kết thúc';
+    kill.addEventListener('click', async () => {
+      try {
+        await call(bridge.ssh.tmuxKill(sessionId, item.name));
+        setStatus('Đã kết thúc phiên ' + item.name, 'ok');
+        await refreshTmuxSessions(sessionId);
+      } catch (err) {
+        setStatus(err.message, 'error');
+      }
+    });
+
+    row.append(main, kill);
+    list.appendChild(row);
+  }
+}
+
+/* =========================================================================
  * Mở, kích hoạt và đóng phiên
  * ========================================================================= */
 
@@ -319,9 +524,12 @@ export async function openSession(connId, options = {}) {
     if (text) call(bridge.clipboard.writeText(text)).catch(() => {});
   });
 
+  const paneIndex = options.paneIndex || nextPaneIndex(workspaceId, connId);
   const session = {
+    id: sessionId,
     connId,
     name: conn.name,
+    paneIndex,
     term,
     fit,
     search,
@@ -343,6 +551,9 @@ export async function openSession(connId, options = {}) {
       activeSessionId: sessionId,
       name: conn.name,
       autoName: true,
+      // Số tab dùng để đặt tên phiên tmux, tính riêng cho từng máy chủ vì một
+      // tab có thể chứa pane của nhiều máy. Xem tabIndexFor.
+      tabIndexByConn: {},
     });
   } else if (options.direction) {
     state.workspaces.get(workspaceId).layout = options.direction;
@@ -378,12 +589,15 @@ export async function openSession(connId, options = {}) {
   term.writeln('\x1b[90mĐang kết nối tới ' + conn.username + '@' + conn.host + '…\x1b[0m');
 
   try {
+    const slot = slotOf(session);
     if (options.share && options.sourceSessionId) {
-      await call(bridge.ssh.split(sessionId, options.sourceSessionId, { cols: term.cols, rows: term.rows }));
+      await call(
+        bridge.ssh.split(sessionId, options.sourceSessionId, { cols: term.cols, rows: term.rows }, connId, slot),
+      );
     } else {
       // Kết nối riêng: đi trọn đường ssh:open nên host key, cảnh báo Production
       // và xác nhận lệnh tự động đều được hỏi lại cho đúng pane này.
-      await call(bridge.ssh.open(sessionId, connId, { cols: term.cols, rows: term.rows }));
+      await call(bridge.ssh.open(sessionId, connId, { cols: term.cols, rows: term.rows }, slot));
     }
   } catch (err) {
     session.status = 'gone';
@@ -399,11 +613,13 @@ export async function openSession(connId, options = {}) {
 async function retrySession(sessionId) {
   const session = state.sessions.get(sessionId);
   if (!session) return;
-  const { connId, workspaceId } = session;
+  const { connId, workspaceId, paneIndex } = session;
   const workspace = state.workspaces.get(workspaceId);
   const direction = workspace ? workspace.layout : 'vertical';
   closeSession(sessionId, true);
-  await openSession(connId, { workspaceId, direction });
+  // Giữ nguyên vị trí: đổi số pane là gắn vào một phiên tmux khác. Số tab nằm
+  // trong workspace nên tự nó đã đúng.
+  await openSession(connId, { workspaceId, direction, paneIndex });
 }
 
 function activateSession(sessionId) {
@@ -446,6 +662,8 @@ export function closeSession(sessionId, silent) {
   if (!session) return;
   session.manualClose = true;
   clearTimeout(session.reconnectTimer);
+  hidePaneBanner(session);
+  if (!silent) noteDetach(session);
   bridge.ssh.close(sessionId);
   session.term.dispose();
   session.pane.remove();
@@ -519,7 +737,13 @@ function renderHeader() {
   const conn = session && connectionById(session.connId);
   if (session && conn) {
     $('hb-title').textContent = conn.name;
-    $('hb-subtitle').textContent = conn.username + '@' + conn.host + (conn.port !== 22 ? ':' + conn.port : '');
+    const endpoint = conn.username + '@' + conn.host + (conn.port !== 22 ? ':' + conn.port : '');
+    $('hb-subtitle').textContent = session.tmuxName ? endpoint + ' · ' + session.tmuxName : endpoint;
+    // Vừa gắn lại việc cũ hay vừa mở phiên mới — hai trường hợp nhìn giống hệt
+    // nhau trên màn hình, nên phải nói ra.
+    $('hb-subtitle').title = session.tmuxName
+      ? (session.tmuxAttached ? 'Đã gắn lại phiên đang chạy' : 'Phiên bền mới trên máy chủ') + ': ' + session.tmuxName
+      : '';
   } else {
     $('hb-title').textContent = 'SSH Manager';
     $('hb-subtitle').textContent = state.sessions.size
@@ -533,6 +757,7 @@ function renderHeader() {
     'btn-terminal-copy',
     'btn-terminal-paste',
     'btn-dashboard',
+    'btn-tmux',
     'btn-sftp',
     'btn-tunnels',
     'btn-session-log',
@@ -657,17 +882,36 @@ export function initSessionEvents() {
     const session = state.sessions.get(sessionId);
     if (!session) return;
 
+    if (status.state === 'tmux') {
+      // Tên phiên tới trước khi channel mở, nên badge sẵn sàng ngay khi có chữ.
+      session.tmuxName = status.message;
+      setPaneBadge(session, status.message, status.attached);
+      // tmux sẽ vẽ lại toàn màn hình; dọn nền trước để nó không vẽ đè lên nội
+      // dung cũ cùng mấy dòng thông báo kết nối lại.
+      session.term.clear();
+      return;
+    }
+    if (status.state === 'notice') {
+      session.tmuxName = '';
+      setPaneBadge(session, '');
+      session.term.writeln('\r\n\x1b[33m— ' + status.message + ' —\x1b[0m');
+      return;
+    }
+
     if (status.state === 'connected') {
       session.status = 'connected';
       session.reconnectAttempts = 0;
+      session.reconnectStartedAt = 0;
       clearTimeout(session.reconnectTimer);
       session.reconnectTimer = null;
       setPaneState(session, null);
       setStatus(status.message, 'ok');
       if (state.activeSessionId === sessionId) requestAnimationFrame(() => session.fit.fit());
+      offerPersistence(sessionId);
     } else if (status.state === 'error') {
       session.status = 'gone';
       session.logging = false;
+      if (!session.tmuxName) session.lostWork = true;
       session.term.writeln('\r\n\x1b[31m✗ ' + status.message + '\x1b[0m');
       setPaneState(session, 'dead', status.message);
       setStatus(status.message, 'error');
@@ -675,6 +919,7 @@ export function initSessionEvents() {
     } else if (status.state === 'closed' || status.state === 'ended') {
       session.status = 'gone';
       session.logging = false;
+      if (!session.tmuxName && !session.manualClose) session.lostWork = true;
       session.term.writeln('\r\n\x1b[90m— ' + status.message + ' —\x1b[0m');
       setPaneState(session, 'dead', status.message);
       setStatus(status.message);
@@ -692,17 +937,101 @@ export function initSessionEvents() {
     session.logging = Boolean(active);
     renderHeader();
   });
+
+  // Đổi mạng xong thì gắn lại ngay, không bắt người dùng chờ hết backoff.
+  window.addEventListener('online', () => {
+    for (const [sessionId, session] of state.sessions) {
+      if (session.status !== 'gone' || !session.reconnectTimer) continue;
+      clearTimeout(session.reconnectTimer);
+      session.reconnectTimer = null;
+      session.reconnectAttempts = 0;
+      scheduleReconnect(sessionId);
+    }
+  });
+}
+
+/** Phiên bền đang bật cho máy chủ này hay không, tính cả mặc định chung. */
+function persistenceOn(conn) {
+  if (!conn) return false;
+  return conn.persistentSession ? conn.persistentSession === 'on' : Boolean(state.settings.persistentSessionDefault);
+}
+
+/** Máy chủ nào người dùng đã hai lần từ chối thì thôi không mời nữa. */
+const declinedPersistence = new Map();
+
+// Không có phiên bền thì kết nối lại chỉ để lấy một shell trắng, nên thử ba lần
+// rồi thôi. Có phiên bền thì gắn lại là idempotent và việc vẫn nằm nguyên trên
+// máy chủ, nên kiên nhẫn hơn hẳn — đủ cho một lần đóng nắp laptop.
+const BACKOFF_PLAIN = [1000, 2000, 4000];
+const BACKOFF_PERSISTENT = [1000, 2000, 4000, 8000, 15000, 30000];
+const PERSISTENT_RETRY_WINDOW_MS = 10 * 60 * 1000;
+
+let detachHintsLeft = 3;
+
+/**
+ * Đóng pane khi có phiên bền là *rời phiên*, không phải kết thúc. Nói ba lần đầu
+ * rồi thôi — đủ để học ngữ nghĩa mới mà không bị nhắc lại mãi.
+ *
+ * Nút chỉ mời được khi còn một pane khác trên cùng máy chủ để chạy lệnh; đóng
+ * pane cuối là mất luôn kết nối SSH, không còn đường nào gửi `kill-session`.
+ */
+function noteDetach(session) {
+  if (!session.tmuxName || detachHintsLeft <= 0) return;
+  detachHintsLeft -= 1;
+  const sibling = [...state.sessions].find(
+    ([id, other]) => id !== session.id && other.connId === session.connId && other.status === 'connected',
+  );
+  const text = 'Phiên ' + session.tmuxName + ' vẫn chạy trên máy chủ.';
+  if (sibling) setStatus(text, null, { label: 'Xem phiên', onClick: () => openTmuxSessions(sibling[0]) });
+  else setStatus(text);
+}
+
+/** Mời bật phiên bền đúng lúc người dùng vừa mất việc — và chỉ lúc đó. */
+function offerPersistence(sessionId) {
+  const session = state.sessions.get(sessionId);
+  if (!session || !session.lostWork) return;
+  session.lostWork = false;
+  const conn = connectionById(session.connId);
+  if (!conn || persistenceOn(conn) || (declinedPersistence.get(conn.id) || 0) >= 2) return;
+
+  showPaneBanner(session, 'Việc đang chạy đã mất khi rớt kết nối. Bật phiên bền cho ' + conn.name + '?', [
+    {
+      label: 'Bật',
+      suggested: true,
+      onClick: async () => {
+        try {
+          await call(bridge.connections.setPersistent(conn.id, 'on'));
+          await renderConnections();
+          setStatus('Đã bật phiên bền cho ' + conn.name + '.', 'ok');
+        } catch (err) {
+          setStatus(err.message, 'error');
+        }
+      },
+    },
+    {
+      label: 'Bỏ qua',
+      onClick: () => declinedPersistence.set(conn.id, (declinedPersistence.get(conn.id) || 0) + 1),
+    },
+  ]);
 }
 
 function scheduleReconnect(sessionId) {
   const session = state.sessions.get(sessionId);
   const conn = session && connectionById(session.connId);
   if (!session || !conn || !conn.autoReconnect || session.manualClose || session.reconnectTimer) return;
-  if (session.reconnectAttempts >= 3) {
-    setStatus('Đã dừng tự kết nối lại sau 3 lần thất bại.', 'error');
+
+  const persistent = persistenceOn(conn);
+  const backoff = persistent ? BACKOFF_PERSISTENT : BACKOFF_PLAIN;
+  if (!session.reconnectStartedAt) session.reconnectStartedAt = Date.now();
+  const exhausted = persistent
+    ? Date.now() - session.reconnectStartedAt >= PERSISTENT_RETRY_WINDOW_MS
+    : session.reconnectAttempts >= backoff.length;
+  if (exhausted) {
+    setStatus('Đã dừng tự kết nối lại.', 'error');
     return;
   }
-  const delay = 1000 * 2 ** session.reconnectAttempts;
+
+  const delay = backoff[Math.min(session.reconnectAttempts, backoff.length - 1)];
   session.reconnectAttempts += 1;
   session.term.writeln(
     '\r\n\x1b[33m— Kết nối lại lần ' + session.reconnectAttempts + ' sau ' + delay / 1000 + ' giây —\x1b[0m',
@@ -715,10 +1044,12 @@ function scheduleReconnect(sessionId) {
     renderTabs();
     try {
       await call(
-        bridge.ssh.reconnect(sessionId, session.connId, {
-          cols: session.term.cols,
-          rows: session.term.rows,
-        }),
+        bridge.ssh.reconnect(
+          sessionId,
+          session.connId,
+          { cols: session.term.cols, rows: session.term.rows },
+          slotOf(session),
+        ),
       );
     } catch (err) {
       session.status = 'gone';
@@ -890,9 +1221,35 @@ function openTerminalMenu(event, sessionId) {
         disabled: session.status !== 'connected',
       },
       { separator: true },
+      {
+        label: 'Phiên trên máy chủ…',
+        action: () => openTmuxSessions(sessionId),
+        disabled: session.status !== 'connected',
+      },
+      {
+        label: 'Kết thúc phiên trên máy chủ',
+        action: () => killOwnTmuxSession(sessionId),
+        disabled: session.status !== 'connected' || !session.tmuxName,
+        destructive: true,
+      },
+      { separator: true },
       { label: 'Đóng pane', action: () => closeSession(sessionId), destructive: true },
     ],
   );
+}
+
+/** Kết thúc hẳn phiên tmux của chính pane này, rồi đóng pane. */
+async function killOwnTmuxSession(sessionId) {
+  const session = state.sessions.get(sessionId);
+  if (!session || !session.tmuxName) return;
+  try {
+    await call(bridge.ssh.tmuxKill(sessionId, session.tmuxName));
+    session.tmuxName = '';
+    setStatus('Đã kết thúc phiên trên máy chủ.', 'ok');
+    closeSession(sessionId);
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
 }
 
 /* =========================================================================

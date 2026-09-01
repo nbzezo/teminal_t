@@ -11,6 +11,8 @@ const {
   validatePort,
   validateUsername,
   normalizeEnvironment,
+  normalizePersistentSession,
+  validateTmuxName,
   inspectCommand,
   validateId,
 } = require('./validation');
@@ -41,6 +43,14 @@ function defaultSettings() {
     confirmOnExit: true,
     restoreSessions: true,
     diagnosticLog: false,
+    // Phiên bền đổi ngữ nghĩa của việc đóng pane và của khoá kho, nên mặc định
+    // tắt: người dùng phải chủ động bật, từng máy hoặc toàn cục.
+    persistentSessionDefault: false,
+    // Ba tuỳ chọn app đặt cho session nó tự tạo. Đều ở phạm vi session nên chết
+    // theo session, không đụng tới ~/.tmux.conf của người dùng trên máy chủ.
+    tmuxMouse: true,
+    tmuxHideStatus: true,
+    tmuxHistoryLimit: 50000,
   };
 }
 
@@ -115,6 +125,10 @@ function migrateSettings(input) {
     confirmOnExit: boolOr(source.confirmOnExit, fallback.confirmOnExit),
     restoreSessions: boolOr(source.restoreSessions, fallback.restoreSessions),
     diagnosticLog: boolOr(source.diagnosticLog, fallback.diagnosticLog),
+    persistentSessionDefault: boolOr(source.persistentSessionDefault, fallback.persistentSessionDefault),
+    tmuxMouse: boolOr(source.tmuxMouse, fallback.tmuxMouse),
+    tmuxHideStatus: boolOr(source.tmuxHideStatus, fallback.tmuxHideStatus),
+    tmuxHistoryLimit: Math.round(boundedNumber(source.tmuxHistoryLimit, fallback.tmuxHistoryLimit, 1000, 200000)),
   };
 }
 
@@ -169,6 +183,8 @@ function migratePayload(payload) {
     connectTimeout: boundedNumber(conn.connectTimeout, 20000, 1000, 120000),
     keepaliveInterval: boundedNumber(conn.keepaliveInterval, 20000, 0, 120000),
     autoReconnect: Boolean(conn.autoReconnect),
+    persistentSession: normalizePersistentSession(conn.persistentSession),
+    tmuxSessionName: typeof conn.tmuxSessionName === 'string' ? conn.tmuxSessionName : '',
     jumpHostId: typeof conn.jumpHostId === 'string' ? conn.jumpHostId : '',
     sftpRoot: typeof conn.sftpRoot === 'string' ? conn.sftpRoot : '/',
     tunnels: Array.isArray(conn.tunnels)
@@ -345,6 +361,9 @@ class Vault {
       connectTimeout: boundedNumber(input.connectTimeout, 20000, 1000, 120000),
       keepaliveInterval: boundedNumber(input.keepaliveInterval, 20000, 0, 120000),
       autoReconnect: Boolean(input.autoReconnect),
+      persistentSession: normalizePersistentSession(input.persistentSession),
+      // Để trống nghĩa là tự đặt tên theo tab/pane lúc mở phiên.
+      tmuxSessionName: input.tmuxSessionName ? validateTmuxName(input.tmuxSessionName) : '',
       jumpHostId: input.jumpHostId ? validateId(input.jumpHostId, 'Jump host ID') : '',
       favorite: Boolean(input.favorite),
       createdAt: prev.createdAt || new Date().toISOString(),
@@ -360,6 +379,22 @@ class Vault {
 
     if (idx >= 0) list[idx] = conn;
     else list.push(conn);
+    this._persist();
+    return this._safe(conn);
+  }
+
+  /**
+   * Bật/tắt phiên bền cho một máy chủ mà không đụng gì khác.
+   *
+   * Không dùng `saveConnection` cho việc này: form gửi chuỗi rỗng để nói "giữ
+   * nguyên bí mật", còn payload thiếu hẳn trường mật khẩu sẽ xoá mật khẩu đã lưu.
+   */
+  setPersistentSession(id, mode) {
+    this._assertUnlocked();
+    const conn = this.data.connections.find((item) => item.id === id);
+    if (!conn) throw new Error('Không tìm thấy kết nối');
+    conn.persistentSession = normalizePersistentSession(mode);
+    conn.updatedAt = new Date().toISOString();
     this._persist();
     return this._safe(conn);
   }
@@ -644,6 +679,8 @@ class Vault {
       notes: cleanString(conn.notes, 'Ghi chú', 4000, { trim: false }),
       onConnect: conn.onConnect ? inspectCommand(conn.onConnect).command : '',
       environment: normalizeEnvironment(conn.environment),
+      persistentSession: normalizePersistentSession(conn.persistentSession),
+      tmuxSessionName: conn.tmuxSessionName ? validateTmuxName(conn.tmuxSessionName) : '',
       password: conn.authType === 'password' ? normalizeSecret(conn.password, 'Mật khẩu') : undefined,
       passphrase: conn.authType !== 'password' ? normalizeSecret(conn.passphrase, 'Passphrase') : undefined,
     }));

@@ -14,12 +14,85 @@ const {
   validateUsername,
   validateId,
   clampTerminalSize,
+  validateTmuxName,
   safeErrorMessage,
 } = require('./validation');
 
 /** Đường ống tới ssh-agent của hệ điều hành, nếu có. */
 function detectAgent() {
   return currentPlatform.detectSshAgent();
+}
+
+const PROBE_TIMEOUT_MS = 5000;
+
+// Số đứng trước, tên đứng cuối: tên tmux của người khác có thể chứa dấu cách,
+// nên chỉ tách đúng ba khoảng trắng đầu rồi lấy toàn bộ phần đuôi làm tên.
+const TMUX_PROBE_COMMAND =
+  'command -v tmux >/dev/null 2>&1 && echo __sshman_tmux__; ' +
+  "tmux -u ls -F '#{session_attached} #{session_windows} #{session_created} #{session_name}' 2>/dev/null";
+
+function parseTmuxProbe(output) {
+  const lines = String(output || '').split('\n');
+  const available = lines.some((line) => line.trim() === '__sshman_tmux__');
+  const sessions = [];
+  for (const line of lines) {
+    const parts = line.trim().split(' ');
+    if (parts.length < 4) continue;
+    const [attached, windows, created] = parts;
+    const name = parts.slice(3).join(' ');
+    if (!/^\d+$/.test(attached) || !/^\d+$/.test(windows) || !/^\d+$/.test(created)) continue;
+    sessions.push({
+      name,
+      attached: attached !== '0',
+      windows: Number(windows),
+      createdAt: Number(created) * 1000,
+      // Phiên do app tạo thì bảng dọn dẹp gọi tên khác với phiên người dùng tự mở.
+      owned: name.startsWith('sshman_'),
+    });
+  }
+  return { available, sessions };
+}
+
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, `'"'"'`) + "'";
+}
+
+/**
+ * Lệnh gắn phiên tmux cho một pane.
+ *
+ * Chỉ dùng `;` và `||` chứ không dùng `if/then`, để chạy được cả khi login shell
+ * của người dùng không phải POSIX. `-t =NAME` là so khớp *chính xác*: thiếu dấu
+ * `=` thì `sshman_web01` có thể gắn nhầm vào `sshman_web01-2`.
+ *
+ * `-u` là bắt buộc, không phải cho chắc. tmux đoán terminal có UTF-8 hay không
+ * từ `LC_ALL`/`LC_CTYPE`/`LANG`, và **thay mọi ký tự ngoài ASCII bằng `_`** nếu
+ * đoán là không. Channel `exec` chạy qua `$SHELL -c` nên không đi qua profile
+ * của login shell, tức các biến đó trống — khác hẳn channel `shell` tương tác.
+ * Thiếu `-u` thì "Phiên làm việc" hiện ra thành "Phi_n l_m vi_c".
+ */
+function buildTmuxCommand(tmux, defaultDirectory) {
+  const name = validateTmuxName(tmux.name);
+  const target = '=' + name;
+  // `set-option -t` nhận target-*pane*, và ở đó `=NAME` bị từ chối thẳng
+  // ("no such session"). Thêm dấu hai chấm thành target-window trong đúng
+  // session đó thì vừa được chấp nhận vừa giữ được so khớp chính xác.
+  const optionTarget = target + ':';
+  const directory = defaultDirectory && defaultDirectory.trim() ? defaultDirectory.trim() : '';
+  const create = directory
+    ? // Thư mục đã bị xoá trên máy chủ thì vẫn phải mở được phiên.
+      'tmux -u new-session -d -s ' + name + ' -c ' + shellQuote(directory) + ' 2>/dev/null || tmux -u new-session -d -s ' + name
+    : 'tmux -u new-session -d -s ' + name;
+
+  const parts = ['tmux -u has-session -t ' + target + ' 2>/dev/null || ' + create];
+  // Đặt lại ở mỗi lần gắn: rẻ, không đổi kết quả, và kéo phiên về đúng cài đặt
+  // hiện tại của app. Tất cả đều ở phạm vi session nên chết theo session.
+  if (tmux.mouse) parts.push('tmux -u set-option -t ' + optionTarget + ' mouse on 2>/dev/null');
+  if (tmux.hideStatus) parts.push('tmux -u set-option -t ' + optionTarget + ' status off 2>/dev/null');
+  if (tmux.historyLimit) {
+    parts.push('tmux -u set-option -t ' + optionTarget + ' history-limit ' + Number(tmux.historyLimit) + ' 2>/dev/null');
+  }
+  parts.push('exec tmux -u attach-session -t ' + target);
+  return parts.join('; ');
 }
 
 function fingerprint(keyBuffer) {
@@ -184,7 +257,9 @@ class SshManager {
         state: 'connected',
         message: 'Đã kết nối ' + conn.username + '@' + conn.host,
       });
-      this._openShell(host, sessionId, entry, size, { runOnConnect: true });
+      this._openShell(host, sessionId, entry, size, { runOnConnect: true, tmux: conn.tmux }).catch((err) =>
+        this._fail(sessionId, safeErrorMessage(err)),
+      );
     });
 
     client.on('error', (err) => this._failHost(host, safeErrorMessage(err)));
@@ -275,7 +350,7 @@ class SshManager {
    * Thêm một pane trên chính kết nối SSH của một phiên đang chạy: một shell
    * channel nữa, không bắt tay lại, không xác thực lại, không hỏi host key lại.
    */
-  openShell(sessionId, sourceSessionId, size, handlers) {
+  openShell(sessionId, sourceSessionId, size, handlers, tmux) {
     sessionId = validateId(sessionId, 'Session ID');
     sourceSessionId = validateId(sourceSessionId, 'Session ID');
     if (this.sessions.has(sessionId)) throw new Error('Phiên đã tồn tại');
@@ -290,46 +365,162 @@ class SshManager {
       message: 'Đã mở pane mới trên ' + host.conn.username + '@' + host.conn.host,
     });
     // Lệnh tự động chỉ chạy một lần cho cả kết nối, không lặp ở mỗi pane.
-    this._openShell(host, sessionId, entry, clampTerminalSize(size), { runOnConnect: false });
+    this._openShell(host, sessionId, entry, clampTerminalSize(size), { runOnConnect: false, tmux }).catch((err) =>
+      this._fail(sessionId, safeErrorMessage(err)),
+    );
     return { sessionId, hostId: host.id };
   }
 
-  _openShell(host, sessionId, entry, size, { runOnConnect }) {
-    const conn = host.conn;
-    host.client.shell(
-      {
-        term: 'xterm-256color',
-        cols: size.cols || 80,
-        rows: size.rows || 24,
-      },
-      (err, stream) => {
-        if (err) return this._fail(sessionId, 'Không mở được shell: ' + err.message);
-        if (!this.sessions.has(sessionId)) {
-          // Pane đã bị đóng trong lúc chờ server cấp channel.
-          try {
-            stream.end();
-          } catch {
-            // channel có thể đã hỏng, bỏ qua
-          }
-          return;
-        }
-        entry.stream = stream;
+  /**
+   * Hỏi máy chủ một lần cho cả kết nối: có tmux không, và đang có phiên nào.
+   * Một round trip nuôi cả quyết định gắn phiên, badge trên pane lẫn bảng
+   * "Phiên trên máy chủ", nên không pane nào phải hỏi lại.
+   */
+  _probeTmux(host) {
+    if (host.tmuxProbe) return host.tmuxProbe;
+    host.tmuxProbe = new Promise((resolve) => {
+      const empty = { available: false, sessions: [] };
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      // Máy chủ treo không được phép giữ pane ở trạng thái chờ mãi.
+      const timer = setTimeout(() => finish(empty), PROBE_TIMEOUT_MS);
+      timer.unref?.();
 
-        // Ký tự tiếng Việt chiếm 2-3 byte UTF-8 và TCP có thể cắt gói vào giữa
-        // một ký tự. StringDecoder giữ lại phần byte dở dang chờ mảnh kế tiếp,
-        // thay vì giải mã từng mảnh rời rạc và sinh ra ký tự hỏng.
-        const outDecoder = new StringDecoder('utf8');
-        const errDecoder = new StringDecoder('utf8');
-        stream.on('data', (chunk) => entry.handlers.onData(outDecoder.write(chunk)));
-        stream.stderr.on('data', (chunk) => entry.handlers.onData(errDecoder.write(chunk)));
-        stream.on('close', () => this._finishSession(sessionId, 'closed', 'Phiên đã đóng'));
-        if (conn.defaultDirectory && conn.defaultDirectory.trim()) {
-          const directory = conn.defaultDirectory.trim().replace(/'/g, `'"'"'`);
-          stream.write("cd -- '" + directory + "'\n");
+      host.client.exec(TMUX_PROBE_COMMAND, (err, stream) => {
+        if (err) {
+          clearTimeout(timer);
+          return finish(empty);
         }
-        if (runOnConnect && conn.onConnect && conn.onConnect.trim()) stream.write(conn.onConnect.trim() + '\n');
-      },
-    );
+        let output = '';
+        stream.on('data', (chunk) => {
+          if (output.length < 64 * 1024) output += chunk.toString('utf8');
+        });
+        stream.stderr.on('data', () => {});
+        stream.on('close', () => {
+          clearTimeout(timer);
+          finish(parseTmuxProbe(output));
+        });
+      });
+    });
+    return host.tmuxProbe;
+  }
+
+  /** Danh sách phiên tmux trên máy chủ của một phiên đang mở. */
+  async listTmuxSessions(sessionId) {
+    const entry = this.sessions.get(sessionId);
+    if (!entry) throw new Error('Phiên không còn tồn tại');
+    const host = this.hosts.get(entry.hostId);
+    if (!host) throw new Error('Kết nối không còn tồn tại');
+    // Bảng phải phản ánh máy chủ ngay lúc mở, không phải lúc kết nối.
+    host.tmuxProbe = null;
+    return this._probeTmux(host);
+  }
+
+  /** Kết thúc hẳn một phiên tmux trên máy chủ của một phiên đang mở. */
+  killTmuxSession(sessionId, name) {
+    const entry = this.sessions.get(sessionId);
+    if (!entry) throw new Error('Phiên không còn tồn tại');
+    const target = validateTmuxName(name);
+    const host = this.hosts.get(entry.hostId);
+    return new Promise((resolve, reject) => {
+      entry.client.exec('tmux -u kill-session -t =' + target, (err, stream) => {
+        if (err) return reject(new Error(safeErrorMessage(err)));
+        stream.on('data', () => {});
+        stream.stderr.on('data', () => {});
+        stream.on('close', (code) => {
+          // Danh sách vừa cũ đi, buộc lần xem sau phải hỏi lại máy chủ.
+          if (host) host.tmuxProbe = null;
+          if (code === 0) resolve(true);
+          else reject(new Error('Không kết thúc được phiên ' + target));
+        });
+      });
+    });
+  }
+
+  async _openShell(host, sessionId, entry, size, { runOnConnect, tmux }) {
+    const conn = host.conn;
+    const wanted = tmux && tmux.enabled ? tmux : null;
+    let probe = null;
+    if (wanted) {
+      probe = await this._probeTmux(host);
+      // Pane có thể đã bị đóng trong lúc chờ probe.
+      if (!this.sessions.has(sessionId)) return;
+      if (!probe.available) {
+        entry.handlers.onStatus({
+          state: 'notice',
+          message: 'Máy chủ chưa cài tmux — mở shell thường cho phiên này.',
+        });
+      }
+    }
+    const useTmux = Boolean(wanted && probe && probe.available);
+    if (useTmux) {
+      entry.tmuxName = wanted.name;
+      entry.handlers.onStatus({
+        state: 'tmux',
+        message: wanted.name,
+        attached: probe.sessions.some((item) => item.name === wanted.name),
+      });
+    }
+
+    const onChannel = (err, stream) => {
+      if (err) return this._fail(sessionId, 'Không mở được shell: ' + err.message);
+      if (!this.sessions.has(sessionId)) {
+        // Pane đã bị đóng trong lúc chờ server cấp channel.
+        try {
+          stream.end();
+        } catch {
+          // channel có thể đã hỏng, bỏ qua
+        }
+        return;
+      }
+      entry.stream = stream;
+
+      // Kích thước đã đổi trong lúc chờ channel thì áp ngay, trước khi tmux kịp
+      // vẽ lần đầu — nếu không nó vẽ theo cỡ cũ rồi mới nhảy.
+      if (entry.pendingSize) {
+        const { cols, rows } = entry.pendingSize;
+        entry.pendingSize = null;
+        try {
+          stream.setWindow(rows, cols, 0, 0);
+        } catch {
+          // channel có thể đã hỏng, bỏ qua
+        }
+      }
+
+      // Ký tự tiếng Việt chiếm 2-3 byte UTF-8 và TCP có thể cắt gói vào giữa
+      // một ký tự. StringDecoder giữ lại phần byte dở dang chờ mảnh kế tiếp,
+      // thay vì giải mã từng mảnh rời rạc và sinh ra ký tự hỏng.
+      const outDecoder = new StringDecoder('utf8');
+      const errDecoder = new StringDecoder('utf8');
+      stream.on('data', (chunk) => entry.handlers.onData(outDecoder.write(chunk)));
+      stream.stderr.on('data', (chunk) => entry.handlers.onData(errDecoder.write(chunk)));
+      stream.on('close', () => this._finishSession(sessionId, 'closed', 'Phiên đã đóng'));
+
+      // tmux tự vào đúng thư mục và tự giữ lệnh đã chạy, nên hai dòng dưới chỉ
+      // dành cho shell thường — viết vào phiên tmux là gõ đè lên việc đang chạy.
+      if (useTmux) return;
+      if (conn.defaultDirectory && conn.defaultDirectory.trim()) {
+        stream.write('cd -- ' + shellQuote(conn.defaultDirectory.trim()) + '\n');
+      }
+      if (runOnConnect && conn.onConnect && conn.onConnect.trim()) stream.write(conn.onConnect.trim() + '\n');
+    };
+
+    const pty = {
+      term: 'xterm-256color',
+      cols: size.cols || 80,
+      rows: size.rows || 24,
+    };
+    if (useTmux) {
+      // exec thay vì shell: lệnh gắn phiên không bị echo ra màn hình như khi ghi
+      // thẳng vào một shell tương tác.
+      host.client.exec(buildTmuxCommand(wanted, conn.defaultDirectory), { pty }, onChannel);
+    } else {
+      host.client.shell(pty, onChannel);
+    }
   }
 
   _buildConfig(conn) {
@@ -402,7 +593,15 @@ class SshManager {
 
   resize(sessionId, cols, rows) {
     const entry = this.sessions.get(sessionId);
-    if (entry && entry.stream) entry.stream.setWindow(rows, cols, 0, 0);
+    if (!entry) return;
+    // Probe tmux tốn một round trip, mà giao diện thường fit xong trước khi
+    // channel kịp mở. Không nhớ lại kích thước ở đây thì pty kẹt ở cỡ ban đầu:
+    // tmux gắn vào một window 80x24 nằm giữa cái pane rộng gấp đôi.
+    if (!entry.stream) {
+      entry.pendingSize = { cols, rows };
+      return;
+    }
+    entry.stream.setWindow(rows, cols, 0, 0);
   }
 
   /**
@@ -786,4 +985,4 @@ class SshManager {
   }
 }
 
-module.exports = { SshManager, KnownHosts, detectAgent };
+module.exports = { SshManager, KnownHosts, detectAgent, buildTmuxCommand, parseTmuxProbe };

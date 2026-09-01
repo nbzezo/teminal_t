@@ -6,7 +6,14 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme, clipboard
 const { Vault } = require('./vault');
 const { SshManager, KnownHosts, detectAgent } = require('./ssh-manager');
 const { currentPlatform } = require('./platform');
-const { inspectCommand, safeErrorMessage, validateId, clampTerminalSize } = require('./validation');
+const {
+  inspectCommand,
+  safeErrorMessage,
+  validateId,
+  clampTerminalSize,
+  validateTmuxName,
+  buildTmuxSessionName,
+} = require('./validation');
 const { SftpService } = require('./sftp-service');
 const { DiagnosticLog } = require('./diagnostics');
 const { readWindowState, writeWindowState, captureWindowState } = require('./window-state');
@@ -284,6 +291,32 @@ function registerIpc() {
     return copy;
   };
 
+  /**
+   * Phiên bền có bật cho pane này không, và tên tmux của nó.
+   *
+   * Tên do main process tự dựng từ tên máy chủ trong kho cộng vị trí tab/pane;
+   * renderer chỉ gửi hai con số. Không có chuỗi nào từ renderer đi thẳng vào
+   * lệnh chạy trên máy chủ.
+   */
+  const resolveTmux = (connectionId, slot = {}) => {
+    const conn = vault.getConnectionFull(connectionId);
+    if (!conn) throw new Error('Không tìm thấy kết nối');
+    const settings = vault.getSettings();
+    const mode = conn.persistentSession || (settings.persistentSessionDefault ? 'on' : 'off');
+    if (mode !== 'on') return null;
+    return {
+      enabled: true,
+      name: buildTmuxSessionName(conn.name, {
+        tabIndex: slot && slot.tabIndex,
+        paneIndex: slot && slot.paneIndex,
+        base: conn.tmuxSessionName || '',
+      }),
+      mouse: settings.tmuxMouse,
+      hideStatus: settings.tmuxHideStatus,
+      historyLimit: settings.tmuxHistoryLimit,
+    };
+  };
+
   /** Bộ handler chung cho cả mở mới, mở lại và tách pane. */
   const sessionHandlers = (sessionId) => {
     disposePump(sessionId);
@@ -400,6 +433,7 @@ function registerIpc() {
   handle('conn:jumpUsers', (id) => vault.connectionsUsingJumpHost(id).map((conn) => conn.name));
   handle('conn:delete', (id) => vault.deleteConnection(id));
   handle('conn:duplicate', (id) => vault.duplicateConnection(id));
+  handle('conn:setPersistent', (id, mode) => vault.setPersistentSession(validateId(id, 'Connection ID'), mode));
   handle('conn:saveTunnel', (connectionId, tunnel) => vault.saveTunnel(connectionId, tunnel));
   handle('conn:deleteTunnel', (connectionId, tunnelId) => vault.deleteTunnel(connectionId, tunnelId));
 
@@ -407,7 +441,7 @@ function registerIpc() {
   handle('snip:save', (snippet) => vault.saveSnippet(snippet));
   handle('snip:delete', (id) => vault.deleteSnippet(id));
 
-  handle('ssh:open', async (sessionId, connectionId, size) => {
+  handle('ssh:open', async (sessionId, connectionId, size, slot) => {
     validateId(sessionId, 'Session ID');
     validateId(connectionId, 'Connection ID');
     const conn = connectionForSsh(connectionId);
@@ -450,7 +484,12 @@ function registerIpc() {
     }
 
     // Bản sao để SshManager có thể xoá bí mật khỏi RAM mà không đụng vault
-    ssh.connect(sessionId, { ...conn }, clampTerminalSize(size), sessionHandlers(sessionId));
+    ssh.connect(
+      sessionId,
+      { ...conn, tmux: resolveTmux(connectionId, slot) },
+      clampTerminalSize(size),
+      sessionHandlers(sessionId),
+    );
     vault.touchConnection(connectionId);
     return { sessionId };
   });
@@ -464,20 +503,58 @@ function registerIpc() {
   });
   handle('ssh:metrics', (sessionId) => ssh.probeMetrics(sessionId));
 
-  handle('ssh:split', (sessionId, sourceSessionId, size) => {
+  handle('ssh:tmuxList', (sessionId) => {
     validateId(sessionId, 'Session ID');
-    validateId(sourceSessionId, 'Session ID');
-    return ssh.openShell(sessionId, sourceSessionId, clampTerminalSize(size), sessionHandlers(sessionId));
+    return ssh.listTmuxSessions(sessionId);
   });
 
-  handle('ssh:reconnect', (sessionId, connectionId, size) => {
+  handle('ssh:tmuxKill', async (sessionId, name) => {
+    validateId(sessionId, 'Session ID');
+    const target = validateTmuxName(name);
+    // Kết thúc phiên là giết mọi tiến trình đang chạy trong đó. Hỏi bằng hộp
+    // thoại của hệ điều hành, cùng kiểu với cảnh báo Production.
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Kết thúc phiên trên máy chủ',
+      message: 'Kết thúc hẳn phiên ' + target + '?',
+      detail: 'Mọi tiến trình đang chạy trong phiên này sẽ bị dừng. Không khôi phục được.',
+      buttons: ['Giữ lại', 'Kết thúc'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (response !== 1) throw new Error('Đã huỷ kết thúc phiên');
+    return ssh.killTmuxSession(sessionId, target);
+  });
+
+  handle('ssh:split', (sessionId, sourceSessionId, size, connectionId, slot) => {
+    validateId(sessionId, 'Session ID');
+    validateId(sourceSessionId, 'Session ID');
+    validateId(connectionId, 'Connection ID');
+    return ssh.openShell(
+      sessionId,
+      sourceSessionId,
+      clampTerminalSize(size),
+      sessionHandlers(sessionId),
+      resolveTmux(connectionId, slot),
+    );
+  });
+
+  handle('ssh:reconnect', (sessionId, connectionId, size, slot) => {
     validateId(sessionId, 'Session ID');
     validateId(connectionId, 'Connection ID');
     const conn = connectionForSsh(connectionId, { clearOnConnect: true });
     // Chỉ dùng cho retry tự động. Kết nối lại do người dùng bấm đi qua `ssh:open`
     // để cảnh báo Production và xác nhận lệnh tự động vẫn được hiện đầy đủ.
     if (!conn || !conn.autoReconnect) throw new Error('Kết nối lại tự động chưa được bật');
-    ssh.connect(sessionId, conn, clampTerminalSize(size), sessionHandlers(sessionId));
+    // Ngoại lệ có chủ đích của quy tắc "không chạy lại onConnect": gắn lại phiên
+    // tmux là idempotent, và đây đúng là lúc người dùng cần lại việc đang chạy.
+    ssh.connect(
+      sessionId,
+      { ...conn, tmux: resolveTmux(connectionId, slot) },
+      clampTerminalSize(size),
+      sessionHandlers(sessionId),
+    );
     return { sessionId, reconnect: true };
   });
 
