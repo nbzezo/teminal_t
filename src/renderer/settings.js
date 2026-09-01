@@ -46,6 +46,10 @@ function readSettingsForm() {
     confirmOnExit: $('setting-confirm-exit').checked,
     restoreSessions: $('setting-restore-sessions').checked,
     diagnosticLog: $('setting-diagnostic-log').checked,
+    persistentSessionDefault: $('setting-persistent-default').checked,
+    tmuxMouse: $('setting-tmux-mouse').checked,
+    tmuxHideStatus: $('setting-tmux-hide-status').checked,
+    tmuxHistoryLimit: Number($('setting-tmux-history').value),
   };
 }
 
@@ -61,6 +65,10 @@ function fillSettingsForm(settings) {
   $('setting-confirm-exit').checked = settings.confirmOnExit !== false;
   $('setting-restore-sessions').checked = settings.restoreSessions !== false;
   $('setting-diagnostic-log').checked = Boolean(settings.diagnosticLog);
+  $('setting-persistent-default').checked = Boolean(settings.persistentSessionDefault);
+  $('setting-tmux-mouse').checked = settings.tmuxMouse !== false;
+  $('setting-tmux-hide-status').checked = settings.tmuxHideStatus !== false;
+  $('setting-tmux-history').value = settings.tmuxHistoryLimit || 50000;
 }
 
 let saveTimer = null;
@@ -181,6 +189,10 @@ export function initSettings() {
     'setting-confirm-exit',
     'setting-restore-sessions',
     'setting-diagnostic-log',
+    'setting-persistent-default',
+    'setting-tmux-mouse',
+    'setting-tmux-hide-status',
+    'setting-tmux-history',
   ]) {
     $(id).addEventListener('change', scheduleSettingsSave);
   }

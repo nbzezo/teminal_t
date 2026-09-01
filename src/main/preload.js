@@ -42,6 +42,7 @@ const api = {
     remove: (id) => ipcRenderer.invoke('conn:delete', id),
     jumpUsers: (id) => ipcRenderer.invoke('conn:jumpUsers', id),
     duplicate: (id) => ipcRenderer.invoke('conn:duplicate', id),
+    setPersistent: (id, mode) => ipcRenderer.invoke('conn:setPersistent', id, mode),
     saveTunnel: (connectionId, tunnel) => ipcRenderer.invoke('conn:saveTunnel', connectionId, tunnel),
     deleteTunnel: (connectionId, tunnelId) => ipcRenderer.invoke('conn:deleteTunnel', connectionId, tunnelId),
   },
@@ -53,13 +54,17 @@ const api = {
   },
 
   ssh: {
-    open: (sessionId, connectionId, size) =>
-      ipcRenderer.invoke('ssh:open', sessionId, connectionId, size),
-    reconnect: (sessionId, connectionId, size) =>
-      ipcRenderer.invoke('ssh:reconnect', sessionId, connectionId, size),
+    // `slot` là vị trí tab/pane, chỉ gồm số — main process dựng tên phiên tmux
+    // từ đó cộng với tên máy chủ trong kho.
+    open: (sessionId, connectionId, size, slot) =>
+      ipcRenderer.invoke('ssh:open', sessionId, connectionId, size, slot),
+    reconnect: (sessionId, connectionId, size, slot) =>
+      ipcRenderer.invoke('ssh:reconnect', sessionId, connectionId, size, slot),
     // Pane mới trên chính kết nối SSH đang chạy, không bắt tay lại.
-    split: (sessionId, sourceSessionId, size) =>
-      ipcRenderer.invoke('ssh:split', sessionId, sourceSessionId, size),
+    split: (sessionId, sourceSessionId, size, connectionId, slot) =>
+      ipcRenderer.invoke('ssh:split', sessionId, sourceSessionId, size, connectionId, slot),
+    tmuxList: (sessionId) => ipcRenderer.invoke('ssh:tmuxList', sessionId),
+    tmuxKill: (sessionId, name) => ipcRenderer.invoke('ssh:tmuxKill', sessionId, name),
     input: (sessionId, data) => ipcRenderer.send('ssh:input', sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.send('ssh:resize', sessionId, cols, rows),
     // Báo đã vẽ xong bao nhiêu byte, để main biết khi nào phải phanh dòng dữ liệu.

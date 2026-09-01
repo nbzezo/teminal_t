@@ -99,6 +99,7 @@
             <button id="btn-split-v" class="hb-btn" title="Chia dọc terminal (Ctrl+Shift+E)" aria-label="Chia dọc" disabled></button>
             <button id="btn-split-h" class="hb-btn" title="Chia ngang terminal (Ctrl+Shift+O)" aria-label="Chia ngang" disabled></button>
             <button id="btn-dashboard" class="hb-btn" title="Dashboard máy chủ" aria-label="Dashboard" disabled></button>
+            <button id="btn-tmux" class="hb-btn" title="Phiên trên máy chủ (tmux)" aria-label="Phiên trên máy chủ" disabled></button>
             <button id="btn-sftp" class="hb-btn" title="Quản lý file SFTP" aria-label="SFTP" disabled></button>
             <button id="btn-tunnels" class="hb-btn" title="Port forwarding" aria-label="Tunnel" disabled></button>
             <button id="btn-session-log" class="hb-btn" title="Bật ghi log phiên" aria-label="Ghi log phiên" aria-pressed="false" disabled></button>
@@ -173,6 +174,7 @@
       <!-- Thông báo nổi kiểu AdwToast -->
       <div id="statusbar" class="toast" role="status" aria-live="polite" hidden>
         <span id="status-text" class="selectable"></span>
+        <button id="status-action" class="toast-action" type="button" hidden></button>
       </div>
     </div>
 
@@ -385,9 +387,27 @@
             <label class="row row-switch">
               <span class="row-label">
                 Tự kết nối lại
-                <small class="dim">Tối đa 3 lần; không chạy lại lệnh tự động</small>
+                <small class="dim">Tối đa 3 lần; lâu hơn nhiều khi bật phiên bền</small>
               </span>
               <input id="f-auto-reconnect" type="checkbox" class="switch" />
+            </label>
+            <label class="row">
+              <span class="row-label">
+                Phiên bền (tmux)
+                <small class="dim">Rớt mạng không mất việc; đóng pane là rời phiên, không kết thúc</small>
+              </span>
+              <select id="f-persistent-session">
+                <option value="">Theo mặc định chung</option>
+                <option value="on">Bật</option>
+                <option value="off">Tắt</option>
+              </select>
+            </label>
+            <label class="row">
+              <span class="row-label">
+                Tên phiên
+                <small class="dim">Để trống thì tự đặt theo tên máy chủ và vị trí tab/pane</small>
+              </span>
+              <input id="f-tmux-name" type="text" maxlength="26" placeholder="tự đặt" pattern="[A-Za-z0-9_-]*" />
             </label>
             <label class="row row-stacked">
               <span class="row-label">Ghi chú</span>
@@ -485,6 +505,36 @@
                   <small class="dim">Tab được dựng sẵn nhưng chưa tự kết nối</small>
                 </span>
                 <input id="setting-restore-sessions" type="checkbox" class="switch" checked />
+              </label>
+              <label class="row row-switch">
+                <span class="row-label">
+                  Phiên bền cho mọi máy chủ
+                  <small class="dim">
+                    Mặc định chung; từng máy vẫn tự bật/tắt được. Phiên vẫn chạy trên máy chủ sau khi khoá kho.
+                  </small>
+                </span>
+                <input id="setting-persistent-default" type="checkbox" class="switch" />
+              </label>
+              <label class="row row-switch">
+                <span class="row-label">
+                  tmux: bật chuột
+                  <small class="dim">Trả lại con lăn để cuộn; chỉ áp cho phiên do app tạo</small>
+                </span>
+                <input id="setting-tmux-mouse" type="checkbox" class="switch" checked />
+              </label>
+              <label class="row row-switch">
+                <span class="row-label">
+                  tmux: ẩn thanh status
+                  <small class="dim">App đã có thanh tab riêng; ẩn đi được thêm một dòng terminal</small>
+                </span>
+                <input id="setting-tmux-hide-status" type="checkbox" class="switch" checked />
+              </label>
+              <label class="row">
+                <span class="row-label">
+                  tmux: scrollback
+                  <small class="dim">Chỉ áp cho pane tạo sau; pane đầu tiên theo ~/.tmux.conf trên máy chủ</small>
+                </span>
+                <input id="setting-tmux-history" type="number" min="1000" max="200000" step="1000" value="50000" />
               </label>
             </div>
           </section>
@@ -674,6 +724,29 @@
     </div>
 
     <!-- ===================== Dashboard chỉ đọc ===================== -->
+    <div id="tmux-modal" class="overlay" hidden>
+      <div class="dialog">
+        <header class="dialog-head">
+          <div>
+            <h2>Phiên trên máy chủ</h2>
+            <p id="tmux-subtitle" class="dim dashboard-subtitle"></p>
+          </div>
+        </header>
+        <div class="dialog-body">
+          <p class="dim tmux-hint">
+            Phiên bền vẫn chạy sau khi bạn đóng pane hoặc khoá kho. Kết thúc một phiên là dừng mọi tiến trình trong đó.
+          </p>
+          <div id="tmux-loading" class="dashboard-loading dim">Đang hỏi máy chủ…</div>
+          <p id="tmux-empty" class="dim" hidden></p>
+          <div id="tmux-list" class="tmux-list"></div>
+        </div>
+        <footer class="dialog-foot">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-flat" data-close="tmux-modal">Đóng</button>
+        </footer>
+      </div>
+    </div>
+
     <div id="dashboard-modal" class="overlay" hidden>
       <div class="dialog dashboard-dialog">
         <header class="dialog-head">
