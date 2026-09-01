@@ -445,6 +445,93 @@ app.whenReady().then(async () => {
     })`);
     check('đóng tab thì quay lại trạng thái rỗng', closed.tabs === 0 && closed.emptyShown, closed);
 
+    // --- 13c. Một tab là một công việc: nhiều pane, khác máy chủ ---
+    await run(`(() => {
+      document.getElementById('btn-new').click();
+      document.getElementById('f-name').value = 'Máy thứ hai';
+      document.getElementById('f-host').value = 'second.internal';
+      document.getElementById('f-username').value = 'ops';
+      document.getElementById('conn-form').requestSubmit();
+    })()`);
+    await wait(900);
+    const mixedPanes = await run(`(async () => {
+      const core = await import('./core.js');
+      const sessions = await import('./sessions.js');
+      const first = core.state.connections.find((c) => c.host === 'example.internal').id;
+      const second = core.state.connections.find((c) => c.host === 'second.internal').id;
+      // idle: dựng pane thật nhưng không mở kết nối SSH nào.
+      const firstPane = await sessions.openSession(first, { idle: true });
+      const workspaceId = core.state.sessions.get(firstPane).workspaceId;
+      await sessions.openSession(second, { idle: true, workspaceId, direction: 'vertical' });
+      const panes = [...core.state.sessions.values()].filter((s) => s.workspaceId === workspaceId);
+      return {
+        tabs: document.querySelectorAll('.tab').length,
+        workspaces: core.state.workspaces.size,
+        connIds: panes.map((s) => s.connId),
+        labels: [...document.querySelectorAll('.term-pane:not([hidden]) .pane-label')].map((n) => n.textContent),
+        tabLabel: document.querySelector('.tab-label').textContent,
+        grid: document.getElementById('terminals').className
+      };
+    })()`);
+    check(
+      'hai pane ở hai máy chủ khác nhau nằm chung một tab',
+      mixedPanes.tabs === 1 && mixedPanes.workspaces === 1 && new Set(mixedPanes.connIds).size === 2,
+      mixedPanes,
+    );
+    check(
+      'mỗi pane tự khai máy chủ của nó',
+      mixedPanes.labels.length === 2 &&
+        mixedPanes.labels.some((t) => t.includes('deploy@example.internal')) &&
+        mixedPanes.labels.some((t) => t.includes('ops@second.internal')),
+      mixedPanes.labels,
+    );
+    check(
+      'tab đếm đúng số pane và chuyển sang lưới hai ô',
+      mixedPanes.tabLabel.includes('2 pane') && mixedPanes.grid.includes('split-2'),
+      mixedPanes,
+    );
+
+    // Tên tab mô tả công việc nên phải đổi được, và không bị máy chủ ghi đè lại.
+    await run(`document.querySelector('.tab').dispatchEvent(new MouseEvent('dblclick', {bubbles:true}))`);
+    await wait(300);
+    await run(`(() => {
+      document.getElementById('input-field').value = 'Deploy hotfix';
+      document.getElementById('input-form').requestSubmit();
+    })()`);
+    await wait(300);
+    const renamedTab = await run(`document.querySelector('.tab-label').textContent`);
+    check(
+      'đổi tên tab theo công việc, không theo máy chủ',
+      renamedTab.includes('Deploy hotfix') && renamedTab.includes('2 pane'),
+      renamedTab,
+    );
+
+    // Đóng một pane thì pane còn lại và cả tab vẫn sống.
+    await run(`(async () => {
+      const core = await import('./core.js');
+      const sessions = await import('./sessions.js');
+      const victim = [...core.state.sessions.keys()][0];
+      sessions.closeSession(victim);
+      return true;
+    })()`);
+    await wait(300);
+    const afterOnePaneClosed = await run(`({
+      tabs: document.querySelectorAll('.tab').length,
+      panes: document.querySelectorAll('.term-pane').length,
+      tabLabel: document.querySelector('.tab-label').textContent
+    })`);
+    check(
+      'đóng một pane không kéo theo pane còn lại hay cả tab',
+      afterOnePaneClosed.tabs === 1 &&
+        afterOnePaneClosed.panes === 1 &&
+        afterOnePaneClosed.tabLabel.includes('Deploy hotfix'),
+      afterOnePaneClosed,
+    );
+
+    await run(`document.querySelector('.tab-close').click()`);
+    await wait(300);
+    check('đóng tab hỗn hợp thì mọi pane biến mất', await run(`document.querySelectorAll('.term-pane').length === 0`));
+
     // --- 14. Điều khiển cửa sổ gọi đúng BrowserWindow ---
     // isMaximized()/isMinimized() phản ánh trạng thái do window manager quản lý.
     // CI chạy dưới xvfb, vốn không có window manager nào, nên ở đó cửa sổ không

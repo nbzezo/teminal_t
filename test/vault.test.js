@@ -193,11 +193,6 @@ function ok(label) {
   ok('sao chép kết nối giữ credential nhưng cấp ID mới cho cả kết nối lẫn tunnel');
   final.deleteConnection(duplicate.id);
 
-  // --- workspace: nhớ tab của lần chạy trước ---
-  final.saveWorkspace({ sessions: [saved.id, 'khong-ton-tai'] });
-  assert.deepStrictEqual(final.getWorkspace().sessions, [saved.id]);
-  ok('workspace chỉ giữ những kết nối còn tồn tại');
-
   // --- xoá jump host thì phải dọn tham chiếu ---
   const jumpUser = final.saveConnection({
     name: 'Qua bastion',
@@ -212,13 +207,40 @@ function ok(label) {
   );
   ok('biết trước kết nối nào sẽ mất jump host khi xoá');
 
+  // --- workspace: mỗi tab là một công việc gồm nhiều pane khác máy chủ ---
+  final.saveWorkspace({
+    tabs: [
+      { name: 'Deploy hotfix', layout: 'horizontal', connections: [saved.id, jumpUser.id, 'khong-ton-tai'] },
+      { name: 'Toàn kết nối đã xoá', layout: 'vertical', connections: ['khong-ton-tai'] },
+    ],
+  });
+  assert.deepStrictEqual(final.getWorkspace().tabs, [
+    { name: 'Deploy hotfix', layout: 'horizontal', connections: [saved.id, jumpUser.id] },
+  ]);
+  ok('tab giữ được nhiều pane khác máy chủ và bỏ kết nối không còn tồn tại');
+
+  // Kho của bản cũ chỉ lưu một kết nối mỗi tab; nâng cấp không được làm mất tab.
+  final.saveWorkspace({ sessions: [saved.id, jumpUser.id] });
+  assert.deepStrictEqual(
+    final.getWorkspace().tabs.map((tab) => tab.connections),
+    [[saved.id], [jumpUser.id]],
+  );
+  ok('workspace kiểu cũ đọc lên thành mỗi kết nối một tab');
+
+  final.saveWorkspace({
+    tabs: [{ name: 'Deploy hotfix', layout: 'horizontal', connections: [saved.id, jumpUser.id] }],
+  });
+
   const removal = final.deleteConnection(saved.id);
   assert.strictEqual(removal.detached, 1);
   assert.strictEqual(final.getConnectionFull(jumpUser.id).jumpHostId, '');
-  assert.deepStrictEqual(final.getWorkspace().sessions, []);
-  ok('xoá kết nối dọn luôn tham chiếu jump host và tab đã lưu');
+  assert.deepStrictEqual(final.getWorkspace().tabs, [
+    { name: 'Deploy hotfix', layout: 'horizontal', connections: [jumpUser.id] },
+  ]);
+  ok('xoá kết nối chỉ bỏ đúng pane của nó, tab và pane khác vẫn còn');
 
   final.deleteConnection(jumpUser.id);
+  assert.deepStrictEqual(final.getWorkspace().tabs, []);
   assert.strictEqual(final.listConnections().length, 1);
   ok('xoá kết nối hoạt động');
 

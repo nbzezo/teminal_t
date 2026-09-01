@@ -56,7 +56,8 @@ export const state = {
   snippets: [],
   /** sessionId -> { connId, name, term, fit, search, pane, status, workspaceId, … } */
   sessions: new Map(),
-  /** workspaceId -> { layout, activeSessionId } */
+  /** workspaceId -> { layout, activeSessionId, name, autoName } — một tab là
+   *  một công việc, các pane trong đó có thể ở những máy chủ khác nhau. */
   workspaces: new Map(),
   activeSessionId: null,
   selectedConnId: null,

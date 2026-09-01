@@ -535,6 +535,34 @@ kbd {
 .term-pane.active-pane {
   border-color: var(--accent);
 }
+/* Nhãn máy chủ của pane. Nằm đè lên terminal nên phải tự lo tương phản trên
+   nền terminal, không mượn màu theo chế độ sáng/tối của giao diện. */
+.pane-label {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  z-index: 2;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.term-pane.active-pane .pane-label {
+  border-color: var(--accent);
+  color: #ffffff;
+}
+/* Tab một pane thì nhãn chỉ lặp lại thanh tiêu đề, tắt cho đỡ rối. */
+.terminals.split-1 .pane-label {
+  display: none;
+}
 .terminals.split-2.split-vertical {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

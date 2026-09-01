@@ -23,7 +23,10 @@ Toàn bộ kho — kể cả tên máy chủ — được mã hoá bằng khoá 
 | Tìm và kết nối nhanh    | <kbd>Ctrl</kbd>+<kbd>K</kbd>, gõ tên/host, <kbd>Enter</kbd>                                                            |
 | Lọc danh sách           | Ô tìm kiếm ở cột trái (khớp tên, host, user, nhóm, ghi chú)                                                            |
 | Nhiều phiên cùng lúc    | Mỗi lần kết nối mở một tab riêng; <kbd>Ctrl</kbd>+<kbd>Tab</kbd> hoặc <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> để chuyển |
-| Chia terminal           | Nút chia dọc/ngang hoặc <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E/O</kbd>; tối đa 4 pane **dùng chung một kết nối SSH**   |
+| Chia terminal           | Nút chia dọc/ngang hoặc <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E/O</kbd>; tối đa 4 pane, **mỗi pane là một kết nối SSH riêng** |
+| Pane sang máy chủ khác  | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>, hoặc chuột phải máy chủ ở cột trái → **Mở thành pane trong tab này**      |
+| Pane khỏi xác thực lại  | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> thêm shell trên chính kết nối đang mở; nhanh nhưng rớt kết nối là mất cả nhóm |
+| Đổi tên tab             | Bấm đúp vào tab hoặc chuột phải → **Đổi tên tab**; tab là một công việc chứ không phải một máy chủ                      |
 | Chuyển giữa các pane    | <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd>, hoặc bấm vào pane                                                             |
 | Đóng phiên              | <kbd>Ctrl</kbd>+<kbd>W</kbd> đóng pane, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> đóng cả tab                       |
 | Kết nối lại khi rớt     | Nút **Kết nối lại** hiện ngay trên pane đã ngắt, giữ nguyên vị trí trong tab                                            |
@@ -35,7 +38,7 @@ Toàn bộ kho — kể cả tên máy chủ — được mã hoá bằng khoá 
 | Sao chép cấu hình       | Mở form sửa rồi chọn **Sao chép**; credential vẫn nằm trong vault mã hoá                                               |
 | Sao chép trong terminal | Nút copy, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>Insert</kbd>, hoặc bật *copy khi bôi đen* |
 | Dán vào terminal        | Nút paste, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> hoặc <kbd>Shift</kbd>+<kbd>Insert</kbd>; bracketed paste       |
-| Menu trong terminal     | Chuột phải: sao chép, dán, tìm, chọn tất cả, chia pane, đóng pane                                                       |
+| Menu trong terminal     | Chuột phải: sao chép, dán, tìm, chọn tất cả, chia pane (riêng hoặc dùng chung), đóng pane                               |
 | Mở link trong terminal  | Bấm thẳng vào URL; link mở bằng trình duyệt của hệ điều hành                                                            |
 | Cỡ chữ terminal         | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, áp cho mọi tab và được ghi nhớ                             |
 | Gõ tiếng Việt           | UniKey bảng mã **Unicode** (Telex/VNI); ký tự `keyCode 229` được chuyển nguyên vẹn qua SSH                              |

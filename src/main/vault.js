@@ -50,7 +50,7 @@ function emptyVault() {
     connections: [],
     snippets: [],
     settings: defaultSettings(),
-    workspace: { sessions: [] },
+    workspace: { tabs: [] },
   };
 }
 
@@ -118,6 +118,38 @@ function migrateSettings(input) {
   };
 }
 
+const MAX_WORKSPACE_TABS = 20;
+const MAX_PANES_PER_TAB = 4;
+const PANE_LAYOUTS = ['vertical', 'horizontal'];
+
+/**
+ * Một tab là một workspace: có tên công việc riêng và nhiều pane, mỗi pane là
+ * một kết nối độc lập — nên phải lưu cả danh sách chứ không chỉ máy chủ đầu
+ * tiên. Kho cũ chỉ có mảng `sessions` (một kết nối mỗi tab) nên vẫn phải đọc
+ * được, nếu không thì bản cập nhật sẽ nuốt mất các tab của lần chạy trước.
+ */
+function normalizeWorkspaceTabs(source) {
+  const workspace = source && typeof source === 'object' ? source : {};
+  const raw = Array.isArray(workspace.tabs)
+    ? workspace.tabs
+    : (Array.isArray(workspace.sessions) ? workspace.sessions : []).map((id) => ({ connections: [id] }));
+  const tabs = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const connections = (Array.isArray(item.connections) ? item.connections : [])
+      .filter((id) => typeof id === 'string')
+      .slice(0, MAX_PANES_PER_TAB);
+    if (connections.length === 0) continue;
+    tabs.push({
+      name: typeof item.name === 'string' ? item.name.slice(0, 60) : '',
+      layout: PANE_LAYOUTS.includes(item.layout) ? item.layout : 'vertical',
+      connections,
+    });
+    if (tabs.length >= MAX_WORKSPACE_TABS) break;
+  }
+  return tabs;
+}
+
 function migratePayload(payload) {
   const source = payload && typeof payload === 'object' ? payload : {};
   const migrated = {
@@ -125,11 +157,7 @@ function migratePayload(payload) {
     connections: Array.isArray(source.connections) ? source.connections : [],
     snippets: Array.isArray(source.snippets) ? source.snippets : [],
     settings: migrateSettings(source.settings),
-    workspace: {
-      sessions: Array.isArray(source.workspace && source.workspace.sessions)
-        ? source.workspace.sessions.filter((id) => typeof id === 'string').slice(0, 20)
-        : [],
-    },
+    workspace: { tabs: normalizeWorkspaceTabs(source.workspace) },
   };
 
   migrated.connections = migrated.connections.map((conn) => ({
@@ -356,7 +384,10 @@ class Vault {
         detached += 1;
       }
     }
-    this.data.workspace.sessions = this.data.workspace.sessions.filter((item) => item !== id);
+    // Pane của kết nối vừa xoá phải biến mất khỏi tab đã lưu; tab rỗng thì bỏ hẳn.
+    this.data.workspace.tabs = this.data.workspace.tabs
+      .map((tab) => ({ ...tab, connections: tab.connections.filter((item) => item !== id) }))
+      .filter((tab) => tab.connections.length > 0);
     this._persist();
     return { removed: before !== this.data.connections.length, detached };
   }
@@ -510,17 +541,18 @@ class Vault {
     return this.getSettings();
   }
 
-  /** Danh sách kết nối đang mở tab, để mở lại đúng chỗ đã dừng ở lần sau. */
+  /** Các tab của lần chạy trước: tên công việc, hướng chia và từng pane. */
   getWorkspace() {
     this._assertUnlocked();
-    return { sessions: [...this.data.workspace.sessions] };
+    return { tabs: this.data.workspace.tabs.map((tab) => ({ ...tab, connections: [...tab.connections] })) };
   }
 
   saveWorkspace(input) {
     this._assertUnlocked();
     const known = new Set(this.data.connections.map((conn) => conn.id));
-    const sessions = Array.isArray(input && input.sessions) ? input.sessions : [];
-    this.data.workspace.sessions = sessions.filter((id) => known.has(id)).slice(0, 20);
+    this.data.workspace.tabs = normalizeWorkspaceTabs(input)
+      .map((tab) => ({ ...tab, connections: tab.connections.filter((id) => known.has(id)) }))
+      .filter((tab) => tab.connections.length > 0);
     this._persist();
     return this.getWorkspace();
   }

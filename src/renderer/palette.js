@@ -1,9 +1,26 @@
 'use strict';
 
 import { $, state, openModal, closeModal, matchesFilter, sortConnections } from './core.js';
-import { openSession } from './sessions.js';
+import { openSession, openConnectionAsPane } from './sessions.js';
 
-export function openPalette() {
+/** Cùng một bảng tìm nhanh, hai đích đến: mở tab mới, hoặc thêm pane vào tab. */
+const PALETTE_MODES = {
+  tab: {
+    placeholder: 'Tìm máy chủ rồi nhấn Enter để kết nối',
+    run: (conn) => openSession(conn.id),
+  },
+  pane: {
+    placeholder: 'Tìm máy chủ để mở thành pane trong tab này',
+    run: (conn) => openConnectionAsPane(conn.id),
+  },
+};
+
+let paletteMode = PALETTE_MODES.tab;
+
+/** @param {{mode?: 'tab'|'pane'}} [options] */
+export function openPalette(options = {}) {
+  paletteMode = PALETTE_MODES[options.mode] || PALETTE_MODES.tab;
+  $('palette-input').placeholder = paletteMode.placeholder;
   $('palette-input').value = '';
   renderPalette('');
   openModal('palette');
@@ -38,7 +55,7 @@ function renderPalette(needle) {
     row.append(name, host);
     row.addEventListener('click', () => {
       closeModal('palette');
-      openSession(conn.id);
+      paletteMode.run(conn);
     });
     box.appendChild(row);
   });
@@ -72,7 +89,7 @@ export function initPalette() {
       const conn = state.paletteItems[state.paletteIndex];
       if (conn) {
         closeModal('palette');
-        openSession(conn.id);
+        paletteMode.run(conn);
       }
     }
   });

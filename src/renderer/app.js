@@ -28,6 +28,7 @@ import {
   closeSession,
   closeActiveWorkspace,
   splitActiveSession,
+  duplicateActivePane,
   focusPane,
   cycleWorkspace,
   activateWorkspaceByIndex,
@@ -153,6 +154,7 @@ function onKeydown(event) {
     return;
   }
 
+  // Chia pane mặc định mở một kết nối SSH riêng cho pane mới.
   if (ctrl && event.shiftKey && event.key.toLowerCase() === 'e') {
     event.preventDefault();
     splitActiveSession('vertical');
@@ -161,6 +163,12 @@ function onKeydown(event) {
   if (ctrl && event.shiftKey && event.key.toLowerCase() === 'o') {
     event.preventDefault();
     splitActiveSession('horizontal');
+    return;
+  }
+  // Cần thêm shell trên chính kết nối đang mở (nhanh, không xác thực lại).
+  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'd') {
+    event.preventDefault();
+    duplicateActivePane();
     return;
   }
 
@@ -192,7 +200,10 @@ function onKeydown(event) {
     return;
   }
 
-  if (ctrl && event.key.toLowerCase() === 'k') {
+  if (ctrl && event.shiftKey && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    openPalette({ mode: 'pane' });
+  } else if (ctrl && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     openPalette();
   } else if (ctrl && event.key.toLowerCase() === 'n') {

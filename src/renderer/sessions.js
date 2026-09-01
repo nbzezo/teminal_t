@@ -12,6 +12,7 @@ import {
   clearError,
   icon,
   openModal,
+  askInput,
   showContextMenu,
   connectionById,
   activeSession,
@@ -22,6 +23,7 @@ import {
   TERMINAL_FONTS,
 } from './core.js';
 import { renderConnections } from './connections.js';
+import { openPalette } from './palette.js';
 
 const MAX_PANES = 4;
 const MIN_FONT_SIZE = 10;
@@ -44,6 +46,26 @@ function panesOf(workspaceId) {
   return [...state.sessions.entries()].filter(([, session]) => session.workspaceId === workspaceId);
 }
 
+/** Tên mặc định của tab: tên máy chủ của pane đầu tiên. */
+function defaultWorkspaceName(workspaceId) {
+  const panes = panesOf(workspaceId);
+  if (panes.length === 0) return 'Workspace';
+  const conn = connectionById(panes[0][1].connId);
+  return conn ? conn.name : panes[0][1].name;
+}
+
+/** Tab chưa được đặt tên riêng thì bám theo pane đầu tiên còn lại. */
+function syncWorkspaceName(workspaceId) {
+  const workspace = state.workspaces.get(workspaceId);
+  if (!workspace || !workspace.autoName) return;
+  workspace.name = defaultWorkspaceName(workspaceId);
+}
+
+function setWorkspaceLayout(workspaceId, direction) {
+  const workspace = state.workspaces.get(workspaceId);
+  if (workspace) workspace.layout = direction;
+}
+
 /** Số phiên đang mở của một kết nối, dùng để chấm xanh trong danh sách. */
 export function liveCount(connId) {
   let n = 0;
@@ -53,14 +75,24 @@ export function liveCount(connId) {
   return n;
 }
 
-/** Danh sách kết nối đang mở tab, theo đúng thứ tự tab, để lưu lại cho lần sau. */
-function openWorkspaceConnections() {
-  const seen = [];
-  for (const [workspaceId] of state.workspaces) {
+/**
+ * Ảnh chụp các tab để mở lại ở lần chạy sau. Mỗi tab là một công việc nên phải
+ * lưu đủ cả danh sách pane — các pane có thể nằm ở những máy chủ khác nhau và
+ * chỉ giữ máy chủ đầu tiên thì lần mở lại sẽ mất phần còn lại của công việc.
+ */
+function workspaceSnapshot() {
+  const tabs = [];
+  for (const [workspaceId, workspace] of state.workspaces) {
     const panes = panesOf(workspaceId);
-    if (panes.length) seen.push(panes[0][1].connId);
+    if (panes.length === 0) continue;
+    tabs.push({
+      // Tên tự suy ra thì để trống, lần sau tự lấy lại theo pane đầu tiên.
+      name: workspace.autoName ? '' : workspace.name || '',
+      layout: workspace.layout || 'vertical',
+      connections: panes.map(([, session]) => session.connId),
+    });
   }
-  return seen;
+  return tabs;
 }
 
 let workspaceSaveTimer = null;
@@ -68,7 +100,7 @@ let workspaceSaveTimer = null;
 function scheduleWorkspaceSave() {
   clearTimeout(workspaceSaveTimer);
   workspaceSaveTimer = setTimeout(() => {
-    call(bridge.vault.saveWorkspace({ sessions: openWorkspaceConnections() })).catch(() => {});
+    call(bridge.vault.saveWorkspace({ tabs: workspaceSnapshot() })).catch(() => {});
   }, 1000);
 }
 
@@ -225,8 +257,12 @@ function setPaneState(session, kind, text) {
  * ========================================================================= */
 
 /**
+ * Mở một pane. Không có `share` thì pane là một kết nối SSH độc lập của riêng
+ * nó, kể cả khi trùng máy chủ với pane bên cạnh; `share` thì xin thêm shell
+ * trên chính kết nối của `sourceSessionId`.
  * @param {string} connId
- * @param {{workspaceId?: string, direction?: string, split?: boolean, idle?: boolean}} [options]
+ * @param {{workspaceId?: string, direction?: string, share?: boolean,
+ *          sourceSessionId?: string, idle?: boolean}} [options]
  */
 export async function openSession(connId, options = {}) {
   const conn = connectionById(connId);
@@ -239,6 +275,11 @@ export async function openSession(connId, options = {}) {
   pane.className = 'term-pane';
   const overlay = buildPaneOverlay(sessionId);
   pane._overlay = overlay;
+  // Các pane trong một tab có thể ở những máy chủ khác nhau, nên mỗi pane phải
+  // tự nói mình đang ở đâu; thanh tiêu đề chỉ nói về pane đang focus.
+  const paneLabel = document.createElement('span');
+  paneLabel.className = 'pane-label';
+  pane._label = paneLabel;
   $('terminals').appendChild(pane);
 
   const term = new Terminal({
@@ -257,6 +298,7 @@ export async function openSession(connId, options = {}) {
   term.loadAddon(search);
   term.open(pane);
   pane.appendChild(overlay);
+  pane.appendChild(paneLabel);
   // xterm nhận văn bản từ textarea ẩn này. Nhường composition hoàn toàn cho
   // UniKey/Windows IME và không để trình duyệt tự sửa văn bản đầu vào.
   if (term.textarea) {
@@ -294,11 +336,13 @@ export async function openSession(connId, options = {}) {
   };
   state.sessions.set(sessionId, session);
   if (!state.workspaces.has(workspaceId)) {
+    // Tab là một workspace — một công việc — chứ không thuộc về máy chủ nào.
+    // Tên chỉ mượn máy chủ đầu tiên cho tới khi người dùng đặt tên khác.
     state.workspaces.set(workspaceId, {
       layout: options.direction || 'vertical',
       activeSessionId: sessionId,
-      connId,
       name: conn.name,
+      autoName: true,
     });
   } else if (options.direction) {
     state.workspaces.get(workspaceId).layout = options.direction;
@@ -334,9 +378,11 @@ export async function openSession(connId, options = {}) {
   term.writeln('\x1b[90mĐang kết nối tới ' + conn.username + '@' + conn.host + '…\x1b[0m');
 
   try {
-    if (options.split && options.sourceSessionId) {
+    if (options.share && options.sourceSessionId) {
       await call(bridge.ssh.split(sessionId, options.sourceSessionId, { cols: term.cols, rows: term.rows }));
     } else {
+      // Kết nối riêng: đi trọn đường ssh:open nên host key, cảnh báo Production
+      // và xác nhận lệnh tự động đều được hỏi lại cho đúng pane này.
       await call(bridge.ssh.open(sessionId, connId, { cols: term.cols, rows: term.rows }));
     }
   } catch (err) {
@@ -407,6 +453,7 @@ export function closeSession(sessionId, silent) {
 
   const remaining = panesOf(session.workspaceId);
   if (remaining.length === 0) state.workspaces.delete(session.workspaceId);
+  else syncWorkspaceName(session.workspaceId);
 
   if (state.activeSessionId === sessionId) {
     const next = (remaining[0] || [...state.sessions.entries()][0] || [null])[0];
@@ -428,12 +475,37 @@ export function closeSession(sessionId, silent) {
   }
 }
 
+/** Đóng mọi pane của một tab. */
+function closeWorkspace(workspaceId) {
+  for (const [id] of panesOf(workspaceId)) closeSession(id, true);
+  renderTabs();
+  renderConnections();
+  scheduleWorkspaceSave();
+}
+
 export function closeActiveWorkspace() {
   const session = state.sessions.get(state.activeSessionId);
   if (!session) return;
-  for (const [id] of panesOf(session.workspaceId)) closeSession(id, true);
+  closeWorkspace(session.workspaceId);
+}
+
+/** Đổi tên tab theo công việc nó đang làm, không theo máy chủ. */
+async function renameWorkspace(workspaceId) {
+  const workspace = state.workspaces.get(workspaceId);
+  if (!workspace) return;
+  const answer = await askInput({
+    title: 'Đổi tên tab',
+    label: 'Tên công việc',
+    value: workspace.name || '',
+    placeholder: 'Ví dụ: Deploy hotfix',
+    hint: 'Bỏ trống để quay lại lấy tên theo máy chủ của pane đầu tiên.',
+    confirmLabel: 'Đổi tên',
+  });
+  if (answer === null) return;
+  const name = answer.trim().slice(0, 60);
+  workspace.autoName = !name;
+  workspace.name = name || defaultWorkspaceName(workspaceId);
   renderTabs();
-  renderConnections();
   scheduleWorkspaceSave();
 }
 
@@ -460,8 +532,6 @@ function renderHeader() {
   for (const id of [
     'btn-terminal-copy',
     'btn-terminal-paste',
-    'btn-split-v',
-    'btn-split-h',
     'btn-dashboard',
     'btn-sftp',
     'btn-tunnels',
@@ -469,11 +539,35 @@ function renderHeader() {
   ]) {
     $(id).disabled = !connected;
   }
+  // Pane mới là kết nối độc lập nên không phụ thuộc pane hiện tại còn sống hay
+  // không; chỉ cần đang có một tab để đặt nó vào.
+  for (const id of ['btn-split-v', 'btn-split-h']) $(id).disabled = !session;
   const logButton = $('btn-session-log');
   const logging = Boolean(session && session.logging);
   logButton.classList.toggle('recording', logging);
   logButton.setAttribute('aria-pressed', logging ? 'true' : 'false');
   logButton.title = logging ? 'Đang ghi log phiên — bấm để dừng' : 'Bật ghi log phiên';
+}
+
+/** Mỗi pane tự khai máy chủ của nó; tên kết nối có thể đổi nên vẽ lại theo tab. */
+function renderPaneLabels() {
+  for (const session of state.sessions.values()) {
+    if (!session.pane._label) continue;
+    const conn = connectionById(session.connId);
+    session.pane._label.textContent = conn
+      ? conn.name + ' · ' + conn.username + '@' + conn.host
+      : session.name;
+  }
+}
+
+/** Tooltip của tab liệt kê máy chủ từng pane — tab trộn nhiều máy rất cần. */
+function paneSummary(panes) {
+  return panes
+    .map(([, session]) => {
+      const conn = connectionById(session.connId);
+      return conn ? conn.name + ' — ' + conn.username + '@' + conn.host : session.name;
+    })
+    .join('\n');
 }
 
 export function renderTabs() {
@@ -484,6 +578,8 @@ export function renderTabs() {
   for (const [workspaceId, workspace] of state.workspaces) {
     const panes = panesOf(workspaceId);
     if (panes.length === 0) continue;
+    // Tab chưa đặt tên riêng thì theo kịp cả khi kết nối được đổi tên.
+    syncWorkspaceName(workspaceId);
     const activeInWorkspace = panes.some(([id]) => id === state.activeSessionId);
     const anyConnected = panes.some(([, session]) => session.status === 'connected');
     const allDead = panes.every(([, session]) => session.status === 'gone');
@@ -502,7 +598,8 @@ export function renderTabs() {
     dot.className = 'tab-dot';
     const label = document.createElement('span');
     label.className = 'tab-label';
-    label.textContent = workspace.name + (panes.length > 1 ? ' · ' + panes.length + ' pane' : '');
+    label.textContent = (workspace.name || 'Workspace') + (panes.length > 1 ? ' · ' + panes.length + ' pane' : '');
+    tab.title = paneSummary(panes) + '\n\nBấm đúp để đổi tên tab';
 
     const close = document.createElement('span');
     close.className = 'tab-close';
@@ -512,14 +609,23 @@ export function renderTabs() {
     close.title = 'Đóng tab (Ctrl+W)';
     close.addEventListener('click', (event) => {
       event.stopPropagation();
-      for (const [id] of panesOf(workspaceId)) closeSession(id, true);
-      renderTabs();
-      renderConnections();
-      scheduleWorkspaceSave();
+      closeWorkspace(workspaceId);
     });
 
     tab.append(dot, label, close);
     tab.addEventListener('click', () => activateWorkspace(workspaceId));
+    tab.addEventListener('dblclick', (event) => {
+      event.preventDefault();
+      renameWorkspace(workspaceId);
+    });
+    tab.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      showContextMenu({ x: event.clientX, y: event.clientY }, [
+        { label: 'Đổi tên tab…', action: () => renameWorkspace(workspaceId) },
+        { separator: true },
+        { label: 'Đóng tab', action: () => closeWorkspace(workspaceId), destructive: true },
+      ]);
+    });
     tab.addEventListener('keydown', (event) => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       event.preventDefault();
@@ -530,6 +636,7 @@ export function renderTabs() {
     });
     bar.appendChild(tab);
   }
+  renderPaneLabels();
   renderHeader();
 }
 
@@ -626,21 +733,55 @@ function scheduleReconnect(sessionId) {
  * Chia pane
  * ========================================================================= */
 
-export async function splitActiveSession(direction) {
-  const session = requireConnectedSession();
-  if (!session) return;
-  const panes = panesOf(session.workspaceId);
-  if (panes.length >= MAX_PANES) return setStatus('Mỗi workspace hỗ trợ tối đa 4 pane.', 'error');
+/**
+ * Thêm pane vào tab đang xem. Mặc định pane mới là một kết nối SSH riêng — có
+ * thể tới máy chủ khác — nên nó tự bắt tay, tự xác minh host key và chết một
+ * mình khi rớt mạng. `share` giữ lối cũ: thêm shell trên chính kết nối của
+ * pane hiện tại, nhanh và không hỏi lại, đổi lại cả nhóm chết cùng nhau.
+ * @param {'vertical'|'horizontal'} direction
+ * @param {{share?: boolean, connId?: string}} [options]
+ */
+export async function splitActiveSession(direction, options = {}) {
+  const session = state.sessions.get(state.activeSessionId);
+  if (!session) return setStatus('Chưa có tab nào để thêm pane.', 'error');
+  const workspaceId = session.workspaceId;
+  if (panesOf(workspaceId).length >= MAX_PANES) {
+    return setStatus('Mỗi workspace hỗ trợ tối đa ' + MAX_PANES + ' pane.', 'error');
+  }
+
+  if (options.share) {
+    if (session.status !== 'connected') {
+      return setStatus('Pane dùng chung cần pane hiện tại đang kết nối.', 'error');
+    }
+    setWorkspaceLayout(workspaceId, direction);
+    return openSession(session.connId, {
+      workspaceId,
+      direction,
+      share: true,
+      sourceSessionId: state.activeSessionId,
+    });
+  }
+
+  const connId = options.connId || session.connId;
+  if (!connectionById(connId)) return setStatus('Kết nối không còn tồn tại.', 'error');
+  setWorkspaceLayout(workspaceId, direction);
+  return openSession(connId, { workspaceId, direction });
+}
+
+/** Nhân bản pane hiện tại trên chính kết nối SSH đang mở, không xác thực lại. */
+export function duplicateActivePane() {
+  const session = state.sessions.get(state.activeSessionId);
+  if (!session) return setStatus('Chưa có pane nào để nhân bản.', 'error');
   const workspace = state.workspaces.get(session.workspaceId);
-  if (workspace) workspace.layout = direction;
-  // Pane mới chạy trên chính kết nối SSH đang mở: không bắt tay lại, không
-  // xác thực lại, và không hỏi lại cảnh báo Production của phiên vừa xác nhận.
-  await openSession(session.connId, {
-    workspaceId: session.workspaceId,
-    direction,
-    split: true,
-    sourceSessionId: state.activeSessionId,
-  });
+  return splitActiveSession((workspace && workspace.layout) || 'vertical', { share: true });
+}
+
+/** Mở một máy chủ thành pane trong tab đang xem; chưa có tab nào thì mở tab mới. */
+export function openConnectionAsPane(connId) {
+  const session = state.sessions.get(state.activeSessionId);
+  if (!session) return openSession(connId);
+  const workspace = state.workspaces.get(session.workspaceId);
+  return splitActiveSession((workspace && workspace.layout) || 'vertical', { connId });
 }
 
 export function focusPane(index) {
@@ -740,8 +881,14 @@ function openTerminalMenu(event, sessionId) {
       { label: 'Tìm trong terminal', action: openSearchBar, disabled: session.status !== 'connected' },
       { label: 'Chọn tất cả', action: () => session.term.selectAll() },
       { separator: true },
-      { label: 'Chia dọc', action: () => splitActiveSession('vertical'), disabled: session.status !== 'connected' },
-      { label: 'Chia ngang', action: () => splitActiveSession('horizontal'), disabled: session.status !== 'connected' },
+      { label: 'Chia dọc — kết nối riêng', action: () => splitActiveSession('vertical') },
+      { label: 'Chia ngang — kết nối riêng', action: () => splitActiveSession('horizontal') },
+      { label: 'Chia với máy chủ khác…', action: () => openPalette({ mode: 'pane' }) },
+      {
+        label: 'Nhân bản trên cùng kết nối',
+        action: duplicateActivePane,
+        disabled: session.status !== 'connected',
+      },
       { separator: true },
       { label: 'Đóng pane', action: () => closeSession(sessionId), destructive: true },
     ],
@@ -915,8 +1062,20 @@ export async function restoreWorkspace() {
   } catch {
     return;
   }
-  for (const connId of saved.sessions || []) {
-    if (connectionById(connId)) await openSession(connId, { idle: true });
+  for (const tab of saved.tabs || []) {
+    let workspaceId = null;
+    for (const connId of tab.connections || []) {
+      if (!connectionById(connId)) continue;
+      const sessionId = await openSession(connId, { idle: true, workspaceId, direction: tab.layout });
+      if (!sessionId || workspaceId) continue;
+      // Pane đầu tiên tạo ra tab; các pane sau phải rơi vào đúng tab đó.
+      workspaceId = state.sessions.get(sessionId).workspaceId;
+      const workspace = state.workspaces.get(workspaceId);
+      if (workspace && tab.name) {
+        workspace.name = tab.name;
+        workspace.autoName = false;
+      }
+    }
   }
 }
 

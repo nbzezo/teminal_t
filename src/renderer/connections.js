@@ -17,7 +17,7 @@ import {
   connectionById,
   refreshAll,
 } from './core.js';
-import { openSession, liveCount } from './sessions.js';
+import { openSession, openConnectionAsPane, liveCount } from './sessions.js';
 
 /* =========================================================================
  * Danh sách máy chủ
@@ -79,6 +79,11 @@ async function toggleFavorite(conn) {
 function openConnectionMenu(event, conn) {
   showContextMenu({ x: event.clientX, y: event.clientY }, [
     { label: 'Kết nối', action: () => openSession(conn.id) },
+    {
+      label: 'Mở thành pane trong tab này',
+      action: () => openConnectionAsPane(conn.id),
+      disabled: !state.activeSessionId,
+    },
     { label: conn.favorite ? 'Bỏ yêu thích' : 'Đánh dấu yêu thích', action: () => toggleFavorite(conn) },
     { separator: true },
     { label: 'Sửa…', action: () => openConnectionModal(conn.id) },
