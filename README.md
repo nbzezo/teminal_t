@@ -67,6 +67,29 @@ dùng được hoàn toàn bằng bàn phím: <kbd>Tab</kbd> vào danh sách, m�
 chờ — tab được dựng sẵn nhưng chỉ kết nối khi bạn bấm. Đóng cửa sổ lúc còn phiên
 đang chạy sẽ được hỏi lại; có thể tắt trong ⚙ → **Chung**.
 
+## Pane và tab
+
+Một **tab là một công việc**, không phải một máy chủ. Bên trong nó là tối đa 4 pane, và
+mỗi pane là **một kết nối SSH riêng** — kể cả khi hai pane trỏ về cùng một máy. Nhờ vậy
+một tab "Deploy" chứa được pane app server, pane database và pane đọc log ở ba máy khác
+nhau; pane nào rớt thì chỉ pane đó chết, phần còn lại của công việc vẫn nguyên.
+
+- **Pane cùng máy chủ:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> /
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>, hoặc hai nút chia trên thanh công cụ.
+  Pane mới tự bắt tay và tự xác minh host key, nên cảnh báo Production cùng lệnh _chạy
+  ngay khi kết nối_ được hỏi lại cho chính nó.
+- **Pane ở máy chủ khác:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> rồi gõ tên máy,
+  hoặc chuột phải một máy ở cột trái → **Mở thành pane trong tab này**.
+- **Pane không xác thực lại:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> xin thêm một
+  shell trên chính kết nối đang mở — nhanh và không hỏi gì, đổi lại mọi pane dùng chung
+  kết nối đó cùng chết khi nó rớt. Đây là hành vi mặc định của các bản trước 1.2.0.
+- **Đổi tên tab:** bấm đúp lên tab, hoặc chuột phải → **Đổi tên tab**. Bỏ trống thì tên
+  quay về lấy theo máy chủ của pane đầu tiên.
+
+Khi tab có từ hai pane trở lên, mỗi pane hiện nhãn `tên máy · user@host` ở góc trên phải:
+thanh tiêu đề chỉ nói về pane đang được chọn, nên không đủ để phân biệt khi các pane nằm
+ở những máy khác nhau.
+
 ## Phiên bền
 
 Bật **Phiên bền** cho một máy chủ thì mỗi pane chạy trong một phiên `tmux` trên chính
@@ -204,7 +227,7 @@ Các phép kiểm tra được chia theo các tầng sau:
 | `npm run test:tmux`     | Đặt tên phiên (kể cả tên máy chủ tiếng Việt), chặn 15 mẫu command injection, dựng lệnh gắn phiên; rồi qua SSH thật: probe, exec có pty, resize, đường lùi khi máy chủ không có tmux |
 | `npm run test:sftp`     | Canonical path, traversal guard, CRUD, chmod, upload/download và progress                                                                        |
 | `npm run test:tunnel`   | Forward TCP, port conflict, stop và teardown theo phiên SSH                                                                                      |
-| `npm run test:ui`       | Chạy Electron thật: tạo kho, thêm máy chủ, tìm kiếm, bảng Ctrl+K, lệnh nhanh, hộp nhập liệu, thanh tìm terminal, khoá/mở lại                     |
+| `npm run test:ui`       | Chạy Electron thật: tạo kho, thêm máy chủ, tìm kiếm, bảng Ctrl+K, lệnh nhanh, hộp nhập liệu, thanh tìm terminal, khoá/mở lại, và nhiều pane khác máy chủ trong một tab (nhãn pane, đổi tên tab, số tab cho tên phiên tmux) |
 | `npm run test:ime`      | Bộ gõ tiếng Việt: phím trong lúc soạn thảo, tìm không dấu, dữ liệu sống sót qua vòng khoá/mở                                                     |
 | `npm run test:theme`    | Khoá các giá trị Ubuntu: accent cam, bảng Tango, nền tím cà, chữ Ubuntu Sans có glyph tiếng Việt, số đo libadwaita — chạy cả chế độ sáng lẫn tối |
 

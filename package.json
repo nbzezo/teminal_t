@@ -1,6 +1,6 @@
 {
   "name": "sshman",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "SSH connection manager - luu, truy cap nhanh va thao tac lenh",
   "main": "src/main/main.js",
   "scripts": {
